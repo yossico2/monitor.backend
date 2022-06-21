@@ -81,7 +81,7 @@ def generate_events():
 
 def update_event(e):
     now = int(time.time() * 1000)  # start time in ms since epoch
-    if now - e.time < 2000:
+    if now - e.time < 3000:
         return False  # unmodified
 
     # update state
