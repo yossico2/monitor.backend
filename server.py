@@ -73,6 +73,7 @@ def generate_events():
         ring.push(event)
         json_event = json.dumps(event, cls=DataclassJSONEncoder)
         sio.emit('event', json_event)
+        print(f'event: {event}')
 
         sio.sleep(period_ms/1000)
         event_timestamp += period_ms
@@ -120,13 +121,14 @@ def update_events():
 
     while True:
 
-        for e in ring.toArray():
-            if None == e:
+        for event in ring.toArray():
+            if None == event:
                 continue
-            if not update_event(e):
+            if not update_event(event):
                 continue  # unmodified
-            json_event = json.dumps(e, cls=DataclassJSONEncoder)
+            json_event = json.dumps(event, cls=DataclassJSONEncoder)
             sio.emit('event-update', json_event)
+            print(f'event-update: {event}')
 
         sio.sleep(1)
 
