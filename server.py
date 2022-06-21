@@ -80,6 +80,10 @@ def generate_events():
 
 
 def update_event(e):
+    
+    if None == e:
+        return False
+    
     now = int(time.time() * 1000)  # start time in ms since epoch
     if now - e.time < 3000:
         return False  # unmodified
@@ -122,15 +126,12 @@ def update_events():
     while True:
 
         for event in ring.toArray():
-            if None == event:
-                continue
             if not update_event(event):
                 continue  # unmodified
             json_event = json.dumps(event, cls=DataclassJSONEncoder)
             sio.emit('event-update', json_event)
             print(f'event-update: {event}')
-
-        sio.sleep(1)
+            sio.sleep(0.1)
 
 
 if __name__ == '__main__':
