@@ -60,12 +60,16 @@ stateArray = [
 
 def generate_events():
 
+    time = 0
     while True:
         event = Event(
-            time=round(time(), 1),  # round to 100ms
+            # time=round(time(), 1),  # round to 100ms
+            time = time,
             state=stateArray[stateNormal],
             frequency=round(random.random() * 40000, 2)
         )
+
+        time += 100
 
         ring.push(event)
         json_event = json.dumps(event, cls=EnhancedJSONEncoder)
