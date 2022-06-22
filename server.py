@@ -141,14 +141,12 @@ def update_events():
             events = _ring.toArray()
 
         for e in events:
-
             if not update_event(e):
                 continue  # unmodified
-
             json_event = json.dumps(e, cls=DataclassJSONEncoder)
             sio.emit('event-update', json_event)
             print(f'event-update: {e}')
-            break
+            # break
 
 
 if __name__ == '__main__':
