@@ -31,13 +31,13 @@ _ring = Ring(ringSize)
 _ring_lock = threading.Lock()
 
 # event states
-stateNormal = 0
+stateInitial = 0
 stateRequest = 1
 stateResponse = 2
 stateResolved = 3
 
 stateArray = [
-    stateNormal,
+    stateInitial,
     stateRequest,
     stateResponse,
     stateResolved
@@ -71,7 +71,7 @@ def generate_events():
         event = Event(
             time=event_timestamp,
             lastUpdate=event_timestamp,
-            state=stateArray[stateNormal],
+            state=stateArray[stateInitial],
             frequency=round(random.random() * 40000, 2)
         )
 
@@ -93,42 +93,46 @@ def update_event(e):
     if None == e:
         return False
 
-    # lilo
     now = int(time.time() * 1000)  # start time in ms since epoch
-    if now - e.lastUpdate < 2000:
-        return False  # unmodified
 
     # update state
-    if stateNormal == e.state:
-        if now - e.time > 5000:
+    # initial -> request
+    if stateInitial == e.state:
+        if now - e.lastUpdate < 2000:   # do not change state before
             return False  # unmodified
-        if random.random() < 0.5:
+        if now - e.time > 3000:         # do not change state after
             return False  # unmodified
+        if random.random() < 0.5:       # x% don't change their state
+            return False  # unmodified (no request)
         e.state = stateRequest
         e.lastUpdate = now
         return True
 
+    # request -> response
     if stateRequest == e.state:
-        if now - e.time > 7000:
+        if now - e.lastUpdate < 5000:   # do not change state before
             return False  # unmodified
-        if random.random() < 0.2:
-            return False  # unmodified (failed to get response)
+        if now - e.time > 20000:        # do not change state after
+            return False  # unmodified
+        if random.random() < 0.8:       # x% don't change their state
+            return False  # unmodified (no response)
         e.state = stateResponse
         e.lastUpdate = now
         return True
 
+    # response -> resolved
     if stateResponse == e.state:
-        if now - e.time > 15000:
+        if now - e.lastUpdate < 10000:  # do not change state before
             return False  # unmodified
-        if random.random() < 0.80:
+        if now - e.time > 20000:        # do not change state after
+            return False  # unmodified
+        if random.random() < 0.99:      # x% don't change their state
             return False  # unmodified (not resolved)
         e.state = stateResolved
         e.lastUpdate = now
         return True
 
-    if stateResolved == e.state:
-        return False  # unmodified
-
+    # stateResolved don't change their state
     return False  # unmodified
 
 
@@ -147,7 +151,7 @@ def update_events():
             json_event = json.dumps(e, cls=DataclassJSONEncoder)
             sio.emit('event-update', json_event)
             print(f'event-update: {e}')
-            break
+            # break
 
         sio.sleep(0.1)
 
