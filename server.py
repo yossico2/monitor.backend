@@ -98,36 +98,32 @@ def update_event(e):
     # update state
     # initial -> request
     if stateInitial == e.state:
-        if now - e.lastUpdate < 2000:   # do not change state before
-            return False  # unmodified
-        if now - e.time > 3000:         # do not change state after
-            return False  # unmodified
-        if random.random() < 0.5:       # x% don't change their state
-            return False  # unmodified (no request)
+        if now - e.time < 2000:
+            return False  # do not change state before
         e.state = stateRequest
         e.lastUpdate = now
         return True
 
     # request -> response
     if stateRequest == e.state:
-        if now - e.lastUpdate < 5000:   # do not change state before
-            return False  # unmodified
-        if now - e.time > 20000:        # do not change state after
-            return False  # unmodified
-        if random.random() < 0.8:       # x% don't change their state
-            return False  # unmodified (no response)
+        if now - e.lastUpdate < 10000:
+            return False  # do not change state before lastUpdate
+        if now - e.lastUpdate > 10000:
+            return False  # do not change state after lastUpdate
+        if random.random() < 0.10:
+            return False  # x% don't get response
         e.state = stateResponse
         e.lastUpdate = now
         return True
 
     # response -> resolved
     if stateResponse == e.state:
-        if now - e.lastUpdate < 10000:  # do not change state before
-            return False  # unmodified
-        if now - e.time > 20000:        # do not change state after
-            return False  # unmodified
-        if random.random() < 0.99:      # x% don't change their state
-            return False  # unmodified (not resolved)
+        if now - e.lastUpdate < 10000:
+            return False  # do not change state before lastUpdate
+        if now - e.lastUpdate > 10000:
+            return False  # do not change state after lastUpdate
+        if random.random() < 0.99:
+            return False  # x% don't resolve
         e.state = stateResolved
         e.lastUpdate = now
         return True
@@ -140,6 +136,7 @@ def update_events():
 
     while True:
 
+        sio.sleep(0)
         with _ring_lock:
             events = _ring.toArray()
 
@@ -151,9 +148,7 @@ def update_events():
             json_event = json.dumps(e, cls=DataclassJSONEncoder)
             sio.emit('event-update', json_event)
             print(f'event-update: {e}')
-            # break
-
-        sio.sleep(0.1)
+            break
 
 
 if __name__ == '__main__':
