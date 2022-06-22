@@ -5,6 +5,7 @@ import socketio
 import eventlet
 import dataclasses
 from ring import Ring
+import threading
 
 sio = socketio.Server(cors_allowed_origins='*')
 
@@ -18,15 +19,6 @@ def connect(sid, environ):
 def disconnect(sid):
     print(f'client disconnected {sid}')
 
-# event definition
-
-
-@dataclasses.dataclass
-class Event:
-    time: int
-    state: int
-    frequency: int
-
 
 # event cache
 sec = 1000
@@ -34,7 +26,9 @@ minute = 60 * sec
 cacheSize = 5 * minute
 period = 100
 ringSize = cacheSize / period
-ring = Ring(ringSize)
+_ring = Ring(ringSize)
+
+_ring_lock = threading.Lock()
 
 # event states
 stateNormal = 0
@@ -49,8 +43,18 @@ stateArray = [
     stateResolved
 ]
 
+
+@dataclasses.dataclass
+class Event:
+    time: int = 0
+    lastUpdate: int = 0
+    state: int = 0
+    frequency: int = 0
+
+
 class DataclassJSONEncoder(json.JSONEncoder):
     '''dataclass json encoder'''
+
     def default(self, o):
         if dataclasses.is_dataclass(o):
             return dataclasses.asdict(o)
@@ -66,26 +70,32 @@ def generate_events():
     while True:
         event = Event(
             time=event_timestamp,
+            lastUpdate=event_timestamp,
             state=stateArray[stateNormal],
             frequency=round(random.random() * 40000, 2)
         )
 
-        ring.push(event)
+        # push to ring
+        with _ring_lock:
+            _ring.push(event)
+        print(f'event: {event}')
+
+        # send over sio as json
         json_event = json.dumps(event, cls=DataclassJSONEncoder)
         sio.emit('event', json_event)
-        print(f'event: {event}')
 
         sio.sleep(period_ms/1000)
         event_timestamp += period_ms
 
 
 def update_event(e):
-    
+
     if None == e:
         return False
-    
+
+    # lilo
     now = int(time.time() * 1000)  # start time in ms since epoch
-    if now - e.time < 3000:
+    if now - e.lastUpdate < 2000:
         return False  # unmodified
 
     # update state
@@ -95,6 +105,7 @@ def update_event(e):
         if random.random() < 0.5:
             return False  # unmodified
         e.state = stateRequest
+        e.lastUpdate = now
         return True
 
     if stateRequest == e.state:
@@ -103,14 +114,16 @@ def update_event(e):
         if random.random() < 0.2:
             return False  # unmodified (failed to get response)
         e.state = stateResponse
+        e.lastUpdate = now
         return True
 
     if stateResponse == e.state:
-        if now - e.time > 7000:
+        if now - e.time > 15000:
             return False  # unmodified
-        if random.random() < 0.95:
+        if random.random() < 0.80:
             return False  # unmodified (not resolved)
         e.state = stateResolved
+        e.lastUpdate = now
         return True
 
     if stateResolved == e.state:
@@ -121,17 +134,22 @@ def update_event(e):
 
 def update_events():
 
-    sio.sleep(1)
-
     while True:
 
-        for event in ring.toArray():
-            if not update_event(event):
+        with _ring_lock:
+            events = _ring.toArray()
+
+        for e in events:
+
+            if not update_event(e):
                 continue  # unmodified
-            json_event = json.dumps(event, cls=DataclassJSONEncoder)
+
+            json_event = json.dumps(e, cls=DataclassJSONEncoder)
             sio.emit('event-update', json_event)
-            print(f'event-update: {event}')
-            sio.sleep(0.1)
+            print(f'event-update: {e}')
+            break
+
+        sio.sleep(0.1)
 
 
 if __name__ == '__main__':
@@ -140,4 +158,3 @@ if __name__ == '__main__':
 
     app = socketio.WSGIApp(sio)
     eventlet.wsgi.server(eventlet.listen(('', 5000)), app)
-
