@@ -9,17 +9,6 @@ import threading
 
 sio = socketio.Server(cors_allowed_origins='*')
 
-
-@sio.event
-def connect(sid, environ):
-    print(f'client connected {sid}')
-
-
-@sio.event
-def disconnect(sid):
-    print(f'client disconnected {sid}')
-
-
 # event cache
 sec = 1000
 minute = 60 * sec
@@ -27,7 +16,6 @@ cacheSize = 5 * minute
 period = 100
 ringSize = cacheSize / period
 _ring = Ring(ringSize)
-
 _ring_lock = threading.Lock()
 
 # event states
@@ -46,6 +34,7 @@ stateArray = [
 
 @dataclasses.dataclass
 class Event:
+    index: int = 0
     time: int = 0
     lastUpdate: int = 0
     state: int = 0
@@ -61,14 +50,42 @@ class DataclassJSONEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+_clients = {}
+
+@sio.event
+def connect(sid, environ):
+    print(f'client connected {sid}')
+    _clients[sid] = None
+    # with _ring_lock:
+    #     events = _ring.toArray()
+    #     json_events = []
+    #     for e in events:
+    #         json_events.append(json.dumps(e, cls=DataclassJSONEncoder))
+    #     sio.emit('initialize-events', json_events)
+    #     print(f'initialize-events: {len(events)}')
+
+
+@sio.event
+def disconnect(sid):
+    print(f'client disconnected {sid}')
+
+@sio.on('get-events')
+def get_events(start_time):
+    pass
+
 def generate_events():
 
-    period_ms = 100
+    period_ms = 100 # fire event every 100ms
 
     event_timestamp = int(time.time() * 1000)  # start time in ms since epoch
 
+    index = -1
     while True:
+
+        index += 1
+
         event = Event(
+            index=index,
             time=event_timestamp,
             lastUpdate=event_timestamp,
             state=stateArray[stateInitial],
@@ -145,7 +162,7 @@ def update_events():
                 continue  # unmodified
             json_event = json.dumps(e, cls=DataclassJSONEncoder)
             sio.emit('event-update', json_event)
-            print(f'event-update: {e}')
+            print(f'event-update: {e} delay: {_ring.last().time - e.time}')
             # break
 
 

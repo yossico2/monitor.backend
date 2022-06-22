@@ -20,6 +20,10 @@ class Ring:
     def size(self):
         return self._size
 
+    def last(self):
+        end = (self._start + self._count) % self._size
+        return self._list[end-1]
+
     def push(self, item):
         end = (self._start + self._count) % self._size
         self._list[end] = item
