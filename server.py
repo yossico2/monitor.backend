@@ -1,4 +1,5 @@
 import time
+import datetime
 import json
 import random
 import socketio
@@ -13,7 +14,7 @@ sio = socketio.Server(cors_allowed_origins='*')
 sec = 1000
 minute = 60 * sec
 cacheSize = 5 * minute
-period = 100
+period = 100  # event every 100ms
 ringSize = cacheSize / period
 _ring = Ring(ringSize)
 _ring_lock = threading.Lock()
@@ -51,11 +52,14 @@ class DataclassJSONEncoder(json.JSONEncoder):
 
 
 _clients = {}
+_clients_lock = threading.Lock()
+
 
 @sio.event
 def connect(sid, environ):
     print(f'client connected {sid}')
-    _clients[sid] = None
+    with _clients_lock:
+        _clients[sid] = None
     # with _ring_lock:
     #     events = _ring.toArray()
     #     json_events = []
@@ -69,13 +73,72 @@ def connect(sid, environ):
 def disconnect(sid):
     print(f'client disconnected {sid}')
 
-@sio.on('get-events')
-def get_events(start_time):
-    pass
+
+@dataclasses.dataclass
+class Session:
+    start_time: int = 0
+    background_task: object = None
+    active: bool = False
+
+
+def stream_events_task(sid, start_time):
+    print(
+        f'lilo ------- stream-events: sid {sid} start_time: {start_time} date: {datetime.datetime.fromtimestamp(start_time/1000.0)}')
+
+    last_time_sent = 0
+
+    while True:
+
+        events = []
+        sio.sleep(0)
+        with _ring_lock:
+            events = _ring.toArray()
+
+        for event in events:
+            if not event:
+                continue
+            
+            if event.time < start_time:
+                continue # skip
+
+            if event.time < last_time_sent:
+                continue # skip
+
+            # send over sio as json
+            json_event = json.dumps(event, cls=DataclassJSONEncoder)
+            sio.emit('event', data=json_event, to=sid)
+            last_time_sent = event.time
+
+            print(f'sid: {sid}, event: {event}')
+
+            sio.sleep(period/1000)
+
+            with _clients_lock:
+                session = _clients.get(sid)
+                if not session:
+                    return
+                if not session.active:
+                    return
+
+
+@sio.on('stream-events')
+def stream_events(sid, start_time):
+
+    with _clients_lock:
+        session = _clients.get(sid)
+        if session:
+            # clear client session
+            session.active = False
+            session.background_task.join()
+
+        session = Session(start_time=start_time, background_task=None)
+        _clients[sid] = session
+        session.background_task = sio.start_background_task(
+            stream_events_task, sid=sid, start_time=start_time)
+        session.active = True
+
 
 def generate_events():
-
-    period_ms = 100 # fire event every 100ms
 
     event_timestamp = int(time.time() * 1000)  # start time in ms since epoch
 
@@ -92,17 +155,17 @@ def generate_events():
             frequency=round(random.random() * 40000, 2)
         )
 
-        # push to ring
+        # push to cache
         with _ring_lock:
             _ring.push(event)
-        print(f'event: {event}')
+        # print(f'event: {event}')
 
-        # send over sio as json
-        json_event = json.dumps(event, cls=DataclassJSONEncoder)
-        sio.emit('event', json_event)
+        # # send over sio as json
+        # json_event = json.dumps(event, cls=DataclassJSONEncoder)
+        # sio.emit('event', json_event)
 
-        sio.sleep(period_ms/1000)
-        event_timestamp += period_ms
+        sio.sleep(period/1000)
+        event_timestamp += period
 
 
 def update_event(e):
@@ -168,7 +231,7 @@ def update_events():
 
 if __name__ == '__main__':
     sio.start_background_task(generate_events)
-    sio.start_background_task(update_events)
+    # sio.start_background_task(update_events)
 
     app = socketio.WSGIApp(sio)
     eventlet.wsgi.server(eventlet.listen(('', 5000)), app)
