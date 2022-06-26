@@ -1,12 +1,13 @@
 import sys
 import signal
-from datetime import datetime
-from typing import Dict
 import socketio
 import eventlet
 import threading
-import config
+from datetime import datetime
+from typing import Dict
 from streamer import Streamer
+
+import config
 
 
 def signal_handler(sig, frame):
@@ -23,26 +24,50 @@ class MonitorServer:
         self._clients: Dict[str, Streamer] = dict()
         self._clients_lock = threading.Lock()
 
+        self.sio = socketio.Server(cors_allowed_origins='*')
+        self.sio.on('connect', self.on_connect)
+        self.sio.on('disconnect', self.on_disconnect)
+        self.sio.on('fetch-events', self.on_fetch)
+        self.sio.on('stream-events', self.on_stream)
+        self.sio.on('pause-events', self.on_pause)
+
     def start(self):
-        sio = socketio.Server(cors_allowed_origins='*')
-        sio.on('connect', self.on_connect)
-        sio.on('disconnect', self.on_disconnect)
-        app = socketio.WSGIApp(sio)
+        app = socketio.WSGIApp(self.sio)
         eventlet.wsgi.server(eventlet.listen(('', config.SERVER_PORT)), app)
 
-    def on_connect(self, sid, environ):
+    def on_connect(self, sid: str, environ):
         print(f'client connected {sid}')
-
         with self._clients_lock:
-            self._clients[sid] = Streamer()
+            self._clients[sid] = Streamer(sid=sid, sio=self.sio)
 
-    def on_disconnect(self, sid):
+    def on_disconnect(self, sid: str):
         print(f'client disconnected {sid}')
         with self._clients_lock:
             client_streamer = self._clients.get(sid)
             if client_streamer:
                 client_streamer.stop()
             self._clients[sid] = None
+
+    def on_fetch(self, sid: str, start_date: datetime, end_date: datetime):
+        '''
+        fetch events between (start_date, end_date)
+        '''
+        client_streamer = self._clients.get(sid)
+        client_streamer.fetch(start_date, end_date)
+
+    def on_stream(self, sid: str, start_date: datetime):
+        '''
+        start streamimg events from start_date
+        '''
+        client_streamer = self._clients.get(sid)
+        client_streamer.stream(start_date)
+
+    def on_pause(self, sid: str):
+        '''
+        pause streamimg
+        '''
+        client_streamer = self._clients.get(sid)
+        client_streamer.pause()
 
 
 if __name__ == "__main__":
@@ -51,7 +76,7 @@ if __name__ == "__main__":
     # from datagen import DataGenerator
     # print('generating data to es ... ')
     # data_generator = DataGenerator(es_host=config.ES_HOST)
-    # data_generator.start(start_time=datetime.now())
+    # data_generator.start(start_date=datetime.now())
     # input("press ctrl-c to exit\n")
     # data_generator.stop()
 

@@ -261,7 +261,11 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
 
 
 class Streamer:
-    def __init__(self, sio: socketio.Server) -> None:
+    def __init__(self, sid: str, sio: socketio.Server) -> None:
+
+        # SocketIO
+        self.sid = sid  # sio client socket id
+        self.sio = sio
 
         # Redis (cache)
         redis_client = redis.Redis(config.REDIS_HOST)
@@ -277,8 +281,37 @@ class Streamer:
         )
         # power_blocks = fetcher.fetch(start_date, end_date)
 
+    def fetch(self, start_date: datetime, end_date: datetime):
+        '''
+        fetch events between (start_date, end_date)
+        '''
+        # lilo:TODO
+        power_blocks = self.fetcher.fetch(start_date, end_date)
+
+        json_power_blocks = [
+            json.dumps(power_block)
+            for power_block in power_blocks
+        ]
+
+        self.sio.emit('power_blocks', data=json_power_blocks, to=self.sid)
+
     def stream(self, start_date: datetime):
+        '''
+        start streamimg events from start_date
+        '''
+        # lilo:TODO
+        pass
+
+    def pause(self, sid: str):
+        '''
+        pause streamimg
+        '''
+        # lilo:TODO
         pass
 
     def stop(self):
+        '''
+        stop streamimg
+        '''
+        # lilo:TODO
         pass
