@@ -1,6 +1,5 @@
 import abc
 import json
-import logging
 import typing
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -15,77 +14,46 @@ import pydantic
 from pydantic import BaseModel, validator
 from pydantic.json import pydantic_encoder
 
+import socketio
+
 import config
 
-# ----------------------------------------------------------------------------------
-# Global constants
-# ----------------------------------------------------------------------------------
+import logging
 logger = logging.getLogger(__name__)
 #lilo: logging.basicConfig(level=logging.DEBUG)
-REDIS_URL = '127.0.0.1'
 
-# ----------------------------------------------------------------------------------
-# ElasticSearch (upstream)
-# ----------------------------------------------------------------------------------
-es_client = Search(using=Elasticsearch(hosts=[config.ES_URL]))
-
-# ----------------------------------------------------------------------------------
-# Redis (cache)
-# ----------------------------------------------------------------------------------
-redis_client = redis.Redis(REDIS_URL)
+BUCKET_TIMEDELTA = timedelta(seconds=60)
 
 
 class TimestampModel(BaseModel):
-    """Base model for any records having timestamps."""
+    '''
+    Base model for any records having timestamps.
+    '''
     timestamp: datetime
 
 
-bucket_timedelta = timedelta(seconds=60)
-
-
 class Bucket(BaseModel):
-    """
+    '''
     Model to represent a bucket, the unit of fetching data.
-    """
-
+    '''
     start: datetime
 
     @property
     def end(self) -> datetime:
-        return self.start + bucket_timedelta
+        return self.start + BUCKET_TIMEDELTA
 
     @validator("start")
     def align_start(cls, v: datetime) -> datetime:
-        """Align bucket start date."""
-        seconds_in_bucket = bucket_timedelta.total_seconds()
+        '''Align bucket start date.'''
+        seconds_in_bucket = BUCKET_TIMEDELTA.total_seconds()
         return datetime.fromtimestamp((v.timestamp() // seconds_in_bucket * seconds_in_bucket), timezone.utc)
 
     def next(self) -> "Bucket":
-        """Return the next bucket."""
+        '''Return the next bucket.'''
         return Bucket(start=self.end)
-
-    def cache_key(self) -> str:
-        """Helper function to return the cache key by the bucket start date."""
-        return f"{int(self.start.timestamp())}"
 
     class Config:
         frozen = True
-
-
-def get_buckets(start_date: datetime, end_date: datetime) -> List[Bucket]:
-    """Return the list of (empty) buckets in a date range."""
-    buckets: list[Bucket] = []
-
-    if end_date < start_date:
-        raise ValueError(f"end_date must be greater than start_date")
-
-    bucket = Bucket(start=start_date)
-    while True:
-        buckets.append(bucket)
-        bucket = bucket.next()
-        if bucket.end >= end_date:
-            break
-    return buckets
 
 # ----------------------------------------------------------------------------------
 # Cache utils
@@ -96,7 +64,13 @@ T = TypeVar("T", bound=TimestampModel)
 
 
 class GenericFetcher(abc.ABC, Generic[T]):
-    """Generic cache fetcher.
+    '''
+    Generic cache fetcher.
+
+    Fetch and return the list of records between start_date (inclusive) and end_date (exclusive).
+
+    The fetcher uses cached records if available. Fetch records from the upstream if not in cache and update the cache.
+
     Notice the following things.
     - We define the GenericFetcher as an abstract base class (inherited from ABC)
       and defined some methods as abstract. It's an extra saftey net. The interpreter
@@ -104,31 +78,39 @@ class GenericFetcher(abc.ABC, Generic[T]):
       abstract methods defined. Read more about abstract base
       classes at https://docs.python.org/3/library/abc.html
     - On top of this, we define this class as "generic." In our case, it means that
-      subclasses can specify with types methods  fetch() and get_values_from_upstream()
+      subclasses can specify with types methods fetch() and get_values_from_upstream()
       will return. Read more: https://mypy.readthedocs.io/en/stable/generics.html
-    """
+    '''
 
     @abc.abstractmethod
     def get_cache_key(self, bucket: Bucket) -> str:
         raise NotImplementedError()
 
     @abc.abstractmethod
+    def get_cache_ttl(self, bucket: Bucket):
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     def get_values_from_upstream(self, bucket: Bucket) -> List[T]:
         raise NotImplementedError()
 
+    @abc.abstractmethod
+    def redis_client(self):
+        raise NotImplementedError()
+
     def fetch(self, start_date: datetime, end_date: datetime) -> List[T]:
-        """The main class entrypoint.
-        Fetch and return the list of records between start_date (inclusive) and
-        end_date (exclusive).
-        """
-        buckets = get_buckets(start_date, end_date)
-        model_type = self.get_model_type()
+
+        # initialize a list of (empty) buckets in a date range
+        buckets = self._init_buckets(start_date, end_date)
+
+        model_type = self._get_model_type()
+
         records: list[T] = []
         for bucket in buckets:
 
             # Check if there's anything in cache
             cache_key = self.get_cache_key(bucket)
-            cached_raw_value = redis_client.get(cache_key)
+            cached_raw_value = self.redis_client().get(cache_key)
             if cached_raw_value is not None:
                 records += pydantic.parse_raw_as(
                     list[model_type], cached_raw_value  # type: ignore
@@ -140,28 +122,45 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
             # Save the value to the cache
             raw_value = json.dumps(
-                value, separators=(",", ":"), default=pydantic_encoder
-            )
-            redis_client.set(cache_key, raw_value, ex=get_cache_ttl(bucket))
+                value,
+                separators=(",", ":"),
+                default=pydantic_encoder)
+
+            self.redis_client().set(
+                cache_key,
+                raw_value,
+                ex=self.get_cache_ttl(bucket))
 
             records += value
 
-        return [
-            record for record in records if start_date <= record.timestamp < end_date
-        ]
+        return [record for record in records if start_date <= record.timestamp < end_date]
 
-    def get_model_type(self) -> Type:
-        """Python non-documented black magic to fetch current model.
+    def _get_model_type(self) -> Type:
+        '''
+        Python non-documented black magic to fetch current model.
         Ref: https://stackoverflow.com/a/60984681
-        """
+        '''
         parametrized_generic_fetcher = self.__orig_bases__[0]  # type: ignore
         return typing.get_args(parametrized_generic_fetcher)[0]
 
+    def _init_buckets(self, start_date: datetime, end_date: datetime) -> List[Bucket]:
+        '''
+        return a list of buckets in a date range.
+        '''
+        buckets: list[Bucket] = []
 
-def get_cache_ttl(bucket: Bucket):
-    if bucket.end >= datetime.now(tz=timezone.utc):
-        return int(timedelta(minutes=10).total_seconds())
-    return int(timedelta(days=30).total_seconds())
+        if end_date < start_date:
+            raise ValueError(f"end_date must be greater than start_date")
+
+        bucket = Bucket(start=start_date)
+
+        while True:
+            buckets.append(bucket)
+            bucket = bucket.next()
+            if bucket.end >= end_date:
+                break
+
+        return buckets
 
 # ----------------------------------------------------------------------------------
 # PowerBlock Fetcher
@@ -169,79 +168,117 @@ def get_cache_ttl(bucket: Bucket):
 
 
 class PowerBlock(TimestampModel):
-    """Model to keep track of the individual PowerBlock."""
+    '''
+    Model to keep track of an individual PowerBlock.
+    '''
 
-    amount: Decimal
-    power_block_hash: str
+    frequency: float
+    power: int
 
     class Config:
-        # Unless strongly necessary otherwise, we prefer define our models as frozen.
         frozen = True
 
 
 class PowerBlockFetcher(GenericFetcher[PowerBlock]):
-    """PowerBlock fetcher.
-    Usage example:
-        fetcher = PowerBlockFetcher("1HesYJSP1QqcyPEjnQ9vzBL1wujruNGe7R")
-        power_blocks = fetcher.fetch(start_date, end_date)
-    """
+    '''
+    PowerBlock fetcher.
 
-    def __init__(self, power_blocks_address: str):
-        self.power_blocks_address = power_blocks_address
+    Fetch and return the list of PowerBlock records between start_date (inclusive) and end_date (exclusive).
+
+    Usage example:
+        fetcher = PowerBlockFetcher(redis_client, redis_ttl_sec, es_client, es_index)
+        power_blocks = fetcher.fetch(start_date, end_date)
+    '''
+
+    def __init__(self, redis_client, redis_ttl_sec, es_client, es_index):
+        self.redis_client = redis_client
+        self.es_client = es_client
+        self.index = es_index
+        self.redis_ttl_sec = redis_ttl_sec
+
+    def redis_client(self):
+        return self.redis_client
 
     def get_cache_key(self, bucket: Bucket) -> str:
-        return f"power_blocks:{self.power_blocks_address}:{bucket.cache_key()}"
+        '''return the cache key by the bucket start date.'''
+        # round to 100ms boundary
+        block_time = round(self.start.timestamp(), 1)
+        return f'power_blocks:{block_time}'
+
+    def get_cache_ttl(self, bucket: Bucket):
+        # all buckets have the same ttl
+        return self.redis_ttl_sec
 
     def get_values_from_upstream(self, bucket: Bucket) -> List[PowerBlock]:
-        return fetch_power_blocks(self.power_blocks_address, bucket.start, bucket.end)
+        return self.fetch_power_blocks(bucket.start, bucket.end)
 
+    # ----------------------------------------------------------------------------------
+    # Query
+    # ----------------------------------------------------------------------------------
+
+    def fetch_power_blocks(
+            self,
+            start_date: datetime,
+            end_date: datetime) -> List[PowerBlock]:
+        '''
+        Low-level query to fetch power_blocks from ElasticSearch.
+        Notice how it doesn't know anything about caching or date buckets. 
+        Its job is to pull some data from ElasticSearch, convert them to model 
+        instances, and return them as a list.
+        '''
+
+        logger.info(
+            f"fetch power_blocks from the upstream for ({start_date}, {end_date})")
+
+        search = (
+            self.es_client.index(self.index)
+            .filter(
+                "range",
+                timestamp={
+                    "gte": int(start_date.timestamp()),
+                    "lt": int(end_date.timestamp()),
+                },
+            )
+        )
+
+        # We use scan() instead of execute() to fetch all the records, and wrap it with a
+        # list() to pull everything in memory. As long as we fetch data in buckets of
+        # limited sizes, memory is not a problem.
+        result = list(search.scan())
+        return [
+            PowerBlock(
+                timestamp=datetime.fromtimestamp(
+                    record.timestamp).replace(tzinfo=timezone.utc),
+                frequency=record["frequency"],
+                power=record["power"],
+            )
+            for record in result
+        ]
 
 # ----------------------------------------------------------------------------------
-# Query
+# Streamer
 # ----------------------------------------------------------------------------------
 
 
-def fetch_power_blocks(
-        power_blocks_address: str,
-        start_date: datetime,
-        end_date: datetime) -> List[PowerBlock]:
-    """Low-level query to fetch power_blocks from ElasticSearch.
-    Notice how it doesn't know anything about caching or date buckets. Its job is to
-    pull some data from ElasticSearch, convert them to model instances, and return
-    them as a list.
-    """
-    logger.info(
-        f"Fetch power_blocks for {power_blocks_address} ({start_date}, {end_date}) from the upstream")
+class Streamer:
+    def __init__(self, sio: socketio.Server) -> None:
 
-    search = (
-        es_client.index("output")
-        .filter(
-            "range",
-            timestamp={
-                "gte": int(start_date.timestamp()),
-                "lt": int(end_date.timestamp()),
-            },
-        )
-        .filter(
-            "nested",
-            path="scriptPubKey",
-            query=Q(
-                "bool", filter=[Q("terms", scriptPubKey__addresses=[power_blocks_address])]
-            ),
-        )
-    )
+        # Redis (cache)
+        redis_client = redis.Redis(config.REDIS_HOST)
 
-    # We use scan() instead of execute() to fetch all the records, and wrap it with a
-    # list() to pull everything in memory. As long as we fetch data in buckets of
-    # limited sizes, memory is not a problem.
-    result = list(search.scan())
-    return [
-        PowerBlock(
-            timestamp=datetime.fromtimestamp(record.timestamp).replace(
-                tzinfo=timezone.utc
-            ),
-            amount=record["value"]["raw"],
-            power_block_hash=record["power_blockHash"],
+        # ElasticSearch (upstream)
+        es_client = Search(using=Elasticsearch(hosts=[config.ES_HOST]))
+
+        self.fetcher = PowerBlockFetcher(
+            redis_client=redis_client,
+            es_client=es_client,
+            es_index=config.ES_INDEX,
+            redis_ttl_sec=config.REDIS_TTL_SEC
         )
-        for record in result
-    ]
+        # power_blocks = fetcher.fetch(start_date, end_date)
+
+    def stream(self, start_date: datetime):
+        pass
+
+    def stop(self):
+        pass

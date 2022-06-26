@@ -5,6 +5,7 @@ from elasticsearch_dsl import Document, Date, Integer, Float
 from elasticsearch_dsl.connections import connections
 from datetime import timedelta
 from elasticsearch.helpers import bulk
+import config
 
 DEBUG=False
 
@@ -15,7 +16,7 @@ class PowerBlock(Document):
     power = Integer()
 
     class Index:
-        name = 'power_blocks'
+        name = config.ES_INDEX
         settings = {
           "number_of_shards": 2,
         }
