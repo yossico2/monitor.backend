@@ -15,18 +15,19 @@ import pydantic
 from pydantic import BaseModel, validator
 from pydantic.json import pydantic_encoder
 
+import config
+
 # ----------------------------------------------------------------------------------
 # Global constants
 # ----------------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
-ES_URL = 'http://localhost:9200'
+#lilo: logging.basicConfig(level=logging.DEBUG)
 REDIS_URL = '127.0.0.1'
 
 # ----------------------------------------------------------------------------------
 # ElasticSearch (upstream)
 # ----------------------------------------------------------------------------------
-es_client = Search(using=Elasticsearch(hosts=[ES_URL]))
+es_client = Search(using=Elasticsearch(hosts=[config.ES_URL]))
 
 # ----------------------------------------------------------------------------------
 # Redis (cache)
@@ -43,7 +44,9 @@ bucket_timedelta = timedelta(seconds=60)
 
 
 class Bucket(BaseModel):
-    """Model to represent a bucket, the unit of fetching data."""
+    """
+    Model to represent a bucket, the unit of fetching data.
+    """
 
     start: datetime
 
@@ -74,7 +77,7 @@ def get_buckets(start_date: datetime, end_date: datetime) -> List[Bucket]:
     buckets: list[Bucket] = []
 
     if end_date < start_date:
-        raise ValueError(f"{end_date=} must be greater than {start_date=}")
+        raise ValueError(f"end_date must be greater than start_date")
 
     bucket = Bucket(start=start_date)
     while True:
@@ -199,17 +202,16 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
 
 
 def fetch_power_blocks(
-    power_blocks_address: str, start_date: datetime, end_date: datetime
-) -> List[PowerBlock]:
+        power_blocks_address: str,
+        start_date: datetime,
+        end_date: datetime) -> List[PowerBlock]:
     """Low-level query to fetch power_blocks from ElasticSearch.
     Notice how it doesn't know anything about caching or date buckets. Its job is to
     pull some data from ElasticSearch, convert them to model instances, and return
     them as a list.
     """
     logger.info(
-        f"Fetch power_blocks for {power_blocks_address=} "
-        f"({start_date=}, {end_date=}) from the upstream"
-    )
+        f"Fetch power_blocks for {power_blocks_address} ({start_date}, {end_date}) from the upstream")
 
     search = (
         es_client.index("output")
@@ -243,7 +245,3 @@ def fetch_power_blocks(
         )
         for record in result
     ]
-
-
-if __name__ == "__main__":
-    pass

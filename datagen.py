@@ -1,48 +1,93 @@
 import time
-import redis
+import random
+import threading
+from elasticsearch_dsl import Document, Date, Integer, Float
+from elasticsearch_dsl.connections import connections
+from datetime import timedelta
+from elasticsearch.helpers import bulk
 
-r = redis.Redis()
+DEBUG=False
 
-keys = [f'power:field{i+1}' for i in range(5)]
+class PowerBlock(Document):
 
-for key in keys:
+    timestamp = Date()
+    frequency = Float()
+    power = Integer()
 
-    # create timeseries
-    if not r.exists(key):
-        r.ts().create(key=key, duplicate_policy='last',
-                      labels={'class': 'power'})
+    class Index:
+        name = 'power_blocks'
+        settings = {
+          "number_of_shards": 2,
+        }
 
-start = time.time()
+    def save(self, ** kwargs):
+        self.power = len(self.body.split())
+        return super(PowerBlock, self).save(** kwargs)
 
-pipe = r.ts().pipeline(transaction=True)
+class DataGenerator:
+    def __init__(self, es_host):
 
-# add values for 60 sec
-num_values = 60*10
+        # define a default elasticsearch client
+        self.connection = connections.create_connection(hosts=[es_host])
 
-# now = round(time.time() * 1000)
-now = 0
+        # manage thread
+        self.event_thread_start = threading.Event()
+        self.event_thread_stop = threading.Event()
+        self.stop_flag = False
 
-# # add
-# for key in keys:
-#     timestamp = now
-#     for i in range(num_values):
-#         pipe.add(key=key, timestamp=timestamp, value=i)
-#         timestamp += 100  # 100ms
+        # create the mappings in elasticsearch
+        PowerBlock.init()
 
-# madd
-timestamp = now
-for i in range(num_values):
-    pipe.madd([(f, timestamp, i) for f in keys])
-    timestamp += 100  # 100ms
+    def start(self, start_time):
+        
+        self.thread = threading.Thread(target=self.generate_data, args=(start_time,), daemon=True)
+        self.thread.start()
+        self.event_thread_start.wait()
 
-pipe.execute(raise_on_error=True)
+    def stop(self):
+        if not self.stop_flag:
+            self.stop_flag = True
+            self.event_thread_stop.wait()
 
-end = time.time()
-print(f'{num_values} data points, duration: {end - start}')
+    def generate_data(self, start_time):
+        '''
+        generate PowerBlock objects
+        bulk save to es every 1 sec.
+        '''
 
+        self.event_thread_start.set() # signal started
 
-start = time.time()
-res = r.ts().mrange(0, 1000, filters=["class=power"], bucket_size_msec=1000)
-end = time.time()
-print(f'get data points, duration: {end - start}')
-print(res)
+        # starttime and timedelta
+        timestamp = start_time
+        time_delta = timedelta(milliseconds=100)
+
+        # generate data
+        while not self.stop_flag:
+            
+            # bulk timing
+            if DEBUG:
+                timing_start = time.time()
+
+            # aggregate PowerBlock objects for bulk index
+            power_blocks = []
+
+            for i in range(10 ): # bulk 10 objects every 1 sec.
+                power_blocks.append(
+                    PowerBlock(
+                        timestamp=timestamp, 
+                        frequency=random.randrange(1e3, 40e9), 
+                        power=random.randrange(10, 100)))
+
+                time.sleep(0.1) # sleep 100ms
+                timestamp += time_delta
+
+            # bulk index
+            bulk(self.connection, (b.to_dict(True) for b in power_blocks))
+
+            # bulk timing
+            if DEBUG:
+                duration = time.time() - timing_start
+                print(f'duration: {duration} ms')
+
+        self.event_thread_stop.set() # signal stopped
+    
