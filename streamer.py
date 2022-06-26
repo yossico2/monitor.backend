@@ -109,6 +109,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
         for bucket in buckets:
 
             # Check if there's anything in cache
+            # lilo: mget(redis)?
             cache_key = self.get_cache_key(bucket)
             cached_raw_value = self.redis_client().get(cache_key)
             if cached_raw_value is not None:
@@ -118,9 +119,14 @@ class GenericFetcher(abc.ABC, Generic[T]):
                 continue
 
             # Fetch the value from the upstream
+            # lilo: mget(es)?
             value = self.get_values_from_upstream(bucket)
 
+            # lilo: data may not be available yet in upstream (future end_date)
+            # (trim empty results)
+
             # Save the value to the cache
+            # lilo: mset(redis)?
             raw_value = json.dumps(
                 value,
                 separators=(",", ":"),
@@ -267,6 +273,8 @@ class Streamer:
         self.sid = sid  # sio client socket id
         self.sio = sio
 
+        self.streaming = False
+
         # Redis (cache)
         redis_client = redis.Redis(config.REDIS_HOST)
 
@@ -285,7 +293,6 @@ class Streamer:
         '''
         fetch events between (start_date, end_date)
         '''
-        # lilo:TODO
         power_blocks = self.fetcher.fetch(start_date, end_date)
 
         json_power_blocks = [
@@ -300,18 +307,26 @@ class Streamer:
         start streamimg events from start_date
         '''
         # lilo:TODO
-        pass
+        if self.streaming:
+            raise RuntimeError('already streaming!')
+
+        self.streaming = True
+
+        while self.streaming:
+            pass
 
     def pause(self, sid: str):
         '''
         pause streamimg
         '''
         # lilo:TODO
-        pass
+        if not self.streaming:
+            return
 
     def stop(self):
         '''
         stop streamimg
         '''
         # lilo:TODO
-        pass
+        if not self.streaming:
+            return
