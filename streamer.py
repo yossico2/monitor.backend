@@ -1,14 +1,14 @@
 import abc
 import json
 import typing
+import time
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 from typing import Generic, Type, TypeVar, List
 
 import redis
 
 from elasticsearch.client import Elasticsearch
-from elasticsearch_dsl import Q, Search
+from elasticsearch_dsl import Search
 
 import pydantic
 from pydantic import BaseModel, validator
@@ -17,6 +17,7 @@ from pydantic.json import pydantic_encoder
 import socketio
 
 import config
+import utils
 
 import logging
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def redis_client(self):
+    def get_redis_client(self):
         raise NotImplementedError()
 
     def fetch(self, start_date: datetime, end_date: datetime) -> List[T]:
@@ -111,7 +112,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
             # Check if there's anything in cache
             # lilo: mget(redis)?
             cache_key = self.get_cache_key(bucket)
-            cached_raw_value = self.redis_client().get(cache_key)
+            cached_raw_value = self.get_redis_client().get(cache_key)
             if cached_raw_value is not None:
                 records += pydantic.parse_raw_as(
                     list[model_type], cached_raw_value  # type: ignore
@@ -120,24 +121,24 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
             # Fetch the value from the upstream
             # lilo: mget(es)?
-            value = self.get_values_from_upstream(bucket)
+            values = self.get_values_from_upstream(bucket)
 
             # lilo: data may not be available yet in upstream (future end_date)
             # (trim empty results)
 
             # Save the value to the cache
             # lilo: mset(redis)?
-            raw_value = json.dumps(
-                value,
+            raw_values = json.dumps(
+                values,
                 separators=(",", ":"),
                 default=pydantic_encoder)
 
-            self.redis_client().set(
+            self.get_redis_client().set(
                 cache_key,
-                raw_value,
+                raw_values,
                 ex=self.get_cache_ttl(bucket))
 
-            records += value
+            records += values
 
         return [record for record in records if start_date <= record.timestamp < end_date]
 
@@ -202,13 +203,13 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         self.index = es_index
         self.redis_ttl_sec = redis_ttl_sec
 
-    def redis_client(self):
+    def get_redis_client(self):
         return self.redis_client
 
     def get_cache_key(self, bucket: Bucket) -> str:
         '''return the cache key by the bucket start date.'''
         # round to 100ms boundary
-        block_time = round(self.start.timestamp(), 1)
+        block_time = round(bucket.start.timestamp(), 1)
         return f'power_blocks:{block_time}'
 
     def get_cache_ttl(self, bucket: Bucket):
@@ -241,8 +242,8 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
             .filter(
                 "range",
                 timestamp={
-                    "gte": int(start_date.timestamp()),
-                    "lt": int(end_date.timestamp()),
+                    "gte": utils.to_epoch_millis(start_date),
+                    "lt": utils.to_epoch_millis(end_date),
                 },
             )
         )
@@ -251,15 +252,19 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         # list() to pull everything in memory. As long as we fetch data in buckets of
         # limited sizes, memory is not a problem.
         result = list(search.scan())
-        return [
+        blocks = [
             PowerBlock(
-                timestamp=datetime.fromtimestamp(
-                    record.timestamp).replace(tzinfo=timezone.utc),
+                # lilox
+                # timestamp=datetime.fromtimestamp(record.timestamp).replace(tzinfo=timezone.utc),
+
+                timestamp=record.timestamp,
                 frequency=record["frequency"],
                 power=record["power"],
             )
             for record in result
         ]
+
+        return blocks
 
 # ----------------------------------------------------------------------------------
 # Streamer
@@ -287,7 +292,6 @@ class Streamer:
             es_index=config.ES_INDEX,
             redis_ttl_sec=config.REDIS_TTL_SEC
         )
-        # power_blocks = fetcher.fetch(start_date, end_date)
 
     def fetch(self, start_date: datetime, end_date: datetime):
         '''
@@ -312,8 +316,13 @@ class Streamer:
 
         self.streaming = True
 
-        while self.streaming:
-            pass
+        seconds_in_bucket = BUCKET_TIMEDELTA.total_seconds()
+        end_date = start_date + timedelta(seconds_in_bucket)
+        power_blocks = self.fetcher.fetch(start_date, end_date)
+        print(f'lilo ----------- power_blocks: {power_blocks}')
+
+        # while self.streaming:
+        #     pass
 
     def pause(self, sid: str):
         '''

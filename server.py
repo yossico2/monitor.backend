@@ -3,7 +3,7 @@ import signal
 import socketio
 import eventlet
 import threading
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict
 from streamer import Streamer
 
@@ -73,13 +73,23 @@ class MonitorServer:
 if __name__ == "__main__":
 
     # simulate data
-    # from datagen import DataGenerator
-    # print('generating data to es ... ')
-    # data_generator = DataGenerator(es_host=config.ES_HOST)
-    # data_generator.start(start_date=datetime.now())
+    import time
+    from datagen import DataGenerator
+    print('generating data to es ... ')
+    data_generator = DataGenerator(es_host=config.ES_HOST)
+    data_generator.start(start_date=datetime.now(tz=timezone.utc))
     # input("press ctrl-c to exit\n")
-    # data_generator.stop()
+    time.sleep(3)  # sec
+    data_generator.stop()
 
     print('starting monitor backend server ... ')
     server = MonitorServer()
-    server.start()
+    # server.start()
+
+    sid = 'lilo'
+    server.on_connect(sid=sid, environ={})
+    end_date = datetime.now(tz=timezone.utc)
+    start_date = end_date - timedelta(seconds=1)
+    server.on_fetch(sid=sid, start_date=start_date, end_date=end_date)
+    
+    input("press ctrl-c to exit\n")

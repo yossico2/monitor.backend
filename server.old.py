@@ -1,5 +1,5 @@
 import time
-import datetime
+from datetime import datetime, timezone
 import json
 import random
 import socketio
@@ -83,7 +83,7 @@ class Session:
 
 def stream_events_task(sid, start_time):
     print(
-        f'lilo ------- stream-events: sid {sid} start_time: {start_time} date: {datetime.datetime.fromtimestamp(start_time/1000.0)}')
+        f'lilo ------- stream-events: sid {sid} start_time: {start_time} date: {datetime.fromtimestamp(start_time/1000.0, timezone.utc)}')
 
     last_time_sent = 0
 
