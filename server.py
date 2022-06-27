@@ -79,7 +79,7 @@ if __name__ == "__main__":
     data_generator = DataGenerator(es_host=config.ES_HOST)
     data_generator.start(start_date=datetime.now(tz=timezone.utc))
     # input("press ctrl-c to exit\n")
-    # time.sleep(3)  # sec
+    time.sleep(3)  # sec
     # data_generator.stop()
 
     print('starting monitor backend server ... ')
@@ -93,7 +93,7 @@ if __name__ == "__main__":
     # start_date = end_date - timedelta(seconds=1)
     # server.on_fetch(sid=sid, start_date=start_date, end_date=end_date)
 
-    start_date = datetime.now(tz=timezone.utc)
+    start_date = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
     server.on_stream(sid=sid, start_date=start_date)
 
     input("press ctrl-c to exit\n")

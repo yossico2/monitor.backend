@@ -1,7 +1,6 @@
 import abc
 import json
 import typing
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Generic, Type, TypeVar, List
 
@@ -140,7 +139,9 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
             records += values
 
-        return [record for record in records if start_date <= record.timestamp < end_date]
+        hits = [record for record in records if
+                start_date <= record.timestamp < end_date]
+        return hits
 
     def _get_model_type(self) -> Type:
         '''
@@ -197,7 +198,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         power_blocks = fetcher.fetch(start_date, end_date)
     '''
 
-    def __init__(self, redis_client, redis_ttl_sec, es_client, es_index):
+    def __init__(self, redis_client: redis.Redis, redis_ttl_sec: int, es_client: Search, es_index: str):
         self.redis_client = redis_client
         self.es_client = es_client
         self.index = es_index
@@ -208,9 +209,8 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
 
     def get_cache_key(self, bucket: Bucket) -> str:
         '''return the cache key by the bucket start date.'''
-        # round to 100ms boundary
-        block_time = round(bucket.start.timestamp(), 1)
-        return f'power_blocks:{block_time}'
+        epoch_millis = utils.to_epoch_millis(bucket.start)
+        return f'power_blocks:{epoch_millis}'
 
     def get_cache_ttl(self, bucket: Bucket):
         # all buckets have the same ttl
@@ -246,12 +246,13 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
                     "lt": utils.to_epoch_millis(end_date),
                 },
             )
+            .sort('timestamp')
         )
 
         # We use scan() instead of execute() to fetch all the records, and wrap it with a
         # list() to pull everything in memory. As long as we fetch data in buckets of
         # limited sizes, memory is not a problem.
-        result = list(search.scan())
+        result = list(search.params(preserve_order=True).scan())
         blocks = [
             PowerBlock(
                 # lilox
