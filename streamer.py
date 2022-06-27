@@ -316,8 +316,10 @@ class Streamer:
 
         self.streaming = True
 
-        seconds_in_bucket = BUCKET_TIMEDELTA.total_seconds()
-        end_date = start_date + timedelta(seconds_in_bucket)
+        # fetch 1 sec
+        # seconds_in_bucket = BUCKET_TIMEDELTA.total_seconds()
+        # end_date = start_date + timedelta(seconds=seconds_in_bucket)
+        end_date = start_date + timedelta(seconds=10)
         power_blocks = self.fetcher.fetch(start_date, end_date)
         print(f'lilo ----------- power_blocks: {power_blocks}')
 

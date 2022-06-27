@@ -79,8 +79,8 @@ if __name__ == "__main__":
     data_generator = DataGenerator(es_host=config.ES_HOST)
     data_generator.start(start_date=datetime.now(tz=timezone.utc))
     # input("press ctrl-c to exit\n")
-    time.sleep(3)  # sec
-    data_generator.stop()
+    # time.sleep(3)  # sec
+    # data_generator.stop()
 
     print('starting monitor backend server ... ')
     server = MonitorServer()
@@ -88,8 +88,12 @@ if __name__ == "__main__":
 
     sid = 'lilo'
     server.on_connect(sid=sid, environ={})
-    end_date = datetime.now(tz=timezone.utc)
-    start_date = end_date - timedelta(seconds=1)
-    server.on_fetch(sid=sid, start_date=start_date, end_date=end_date)
-    
+
+    # end_date = datetime.now(tz=timezone.utc)
+    # start_date = end_date - timedelta(seconds=1)
+    # server.on_fetch(sid=sid, start_date=start_date, end_date=end_date)
+
+    start_date = datetime.now(tz=timezone.utc)
+    server.on_stream(sid=sid, start_date=start_date)
+
     input("press ctrl-c to exit\n")
