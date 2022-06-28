@@ -9,8 +9,6 @@ from elasticsearch.helpers import bulk
 import config
 import utils
 
-DEBUG = False
-
 
 class PowerBlock_Document(Document):
 
@@ -70,13 +68,13 @@ class DataGenerator:
         # start_date and timedelta
         # timestamp as total milliseconds since epoch
         epoch_millisec = utils.to_epoch_millisec(align_block_start(start_date))
-        time_delta = 100 # ms
+        time_delta = 100  # ms
 
         # generate data
         while not self.stop_flag:
 
             # bulk timing
-            if DEBUG:
+            if config.DEBUG_DATAGEN:
                 timing_start = time.time()
 
             # collect PowerBlock_Document objects for bulk index
@@ -96,9 +94,10 @@ class DataGenerator:
             bulk(self.connection, (b.to_dict(True) for b in power_blocks))
 
             # bulk timing
-            if DEBUG:
-                duration = time.time() - timing_start
-                print(f'duration: {duration} ms')
+            if config.DEBUG_DATAGEN:
+                duration_ms = round(1000*(time.time() - timing_start))
+                print(
+                    f'(bulk) fetched {len(power_blocks)} power_blocks (duration: {duration_ms} ms)')
 
         self.event_thread_stop.set()  # signal stopped
 

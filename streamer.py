@@ -25,7 +25,7 @@ import logging
 logger = logging.getLogger(__name__)
 #lilo: logging.basicConfig(level=logging.DEBUG)
 
-BUCKET_TIMEDELTA = timedelta(seconds=60)
+BUCKET_TIMEDELTA = timedelta(seconds=10)
 
 
 class TimestampModel(BaseModel):
@@ -223,6 +223,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         return self.redis_ttl_sec
 
     def get_values_from_upstream(self, bucket: Bucket) -> List[PowerBlock]:
+        print('<<< fetch data from upstream')
         return self.fetch_power_blocks(bucket.start, bucket.end)
 
     # ----------------------------------------------------------------------------------
@@ -320,9 +321,37 @@ class Streamer:
         self.streaming = True
 
         # wait for es data with timestamp >= start_date
-        # ----------------------------------------------
-        while True:
+        self._wait_for_es_data(start_date)
 
+        # start streaming
+        moving_start_date = start_date
+        while self.streaming:
+            if not self.streaming:
+                return  # stop streaming
+
+            # fetch timing
+            if config.DEBUG_STREAMER:
+                timing_start = time.time()
+
+            # fetch 1 sec
+            end_date = moving_start_date + timedelta(seconds=1)
+            power_blocks = self.fetcher.fetch(moving_start_date, end_date)
+            # print(f'lilo ----------- len(power_blocks): {len(power_blocks)}')
+
+            # fetch timing
+            if config.DEBUG_STREAMER:
+                duration_ms = round(1000*(time.time() - timing_start))
+                print(
+                    f'fetched {len(power_blocks)} power_blocks (duration: {duration_ms} ms)')
+
+            # lilo
+            # return
+            time.sleep(1)
+            moving_start_date = end_date + timedelta(microseconds=100000) # 100 ms
+
+    def _wait_for_es_data(self, start_date: datetime):
+
+        while True:
             if not self.streaming:
                 return  # stop streaming
 
@@ -335,24 +364,12 @@ class Streamer:
 
             result = list(s.execute())
             if len(result) > 0:
-                break
+                break  # done: we have es data available for start_date
 
-            print(f'no data yet at start_date: {start_date}')
+            print(f'no data available yet at: {start_date}')
             time.sleep(1)  # wait 1 sec for data to arrive
 
-        # start streaming
-        # ----------------------------------------------
-        while self.streaming:
-            if not self.streaming:
-                return  # stop streaming
-
-            # fetch 1 sec
-            end_date = start_date + timedelta(seconds=1)
-            power_blocks = self.fetcher.fetch(start_date, end_date)
-            print(f'lilo ----------- len(power_blocks): {len(power_blocks)}')
-            return  # lilo
-
-    def pause(self, sid: str):
+    def pause(self):
         '''
         pause streamimg
         '''
