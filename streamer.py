@@ -1,5 +1,8 @@
 import abc
+from json import tool
+import time
 import json
+from operator import index
 import typing
 from datetime import datetime, timedelta, timezone
 from typing import Generic, Type, TypeVar, List
@@ -29,7 +32,8 @@ class TimestampModel(BaseModel):
     '''
     Base model for any records having timestamps.
     '''
-    timestamp: datetime
+    # timestamp: datetime
+    timestamp: int
 
 
 class Bucket(BaseModel):
@@ -139,8 +143,10 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
             records += values
 
-        hits = [record for record in records if
-                start_date <= record.timestamp < end_date]
+        start_date_ms = utils.to_epoch_millis(start_date)
+        end_date_ms = utils.to_epoch_millis(end_date)
+        hits = [record for record in records if start_date_ms <=
+                record.timestamp < end_date_ms]
         return hits
 
     def _get_model_type(self) -> Type:
@@ -194,14 +200,14 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
     Fetch and return the list of PowerBlock records between start_date (inclusive) and end_date (exclusive).
 
     Usage example:
-        fetcher = PowerBlockFetcher(redis_client, redis_ttl_sec, es_client, es_index)
+        fetcher = PowerBlockFetcher(redis_client, redis_ttl_sec, es, es_index)
         power_blocks = fetcher.fetch(start_date, end_date)
     '''
 
-    def __init__(self, redis_client: redis.Redis, redis_ttl_sec: int, es_client: Search, es_index: str):
+    def __init__(self, redis_client: redis.Redis, redis_ttl_sec: int, es: Elasticsearch, power_blocks_index: str):
         self.redis_client = redis_client
-        self.es_client = es_client
-        self.index = es_index
+        self.es = es
+        self.power_blocks_index = power_blocks_index
         self.redis_ttl_sec = redis_ttl_sec
 
     def get_redis_client(self):
@@ -237,22 +243,18 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         logger.info(
             f"fetch power_blocks from the upstream for ({start_date}, {end_date})")
 
-        search = (
-            self.es_client.index(self.index)
-            .filter(
-                "range",
-                timestamp={
-                    "gte": utils.to_epoch_millis(start_date),
-                    "lt": utils.to_epoch_millis(end_date),
-                },
-            )
-            .sort('timestamp')
-        )
+        search = Search(using=self.es, index=self.power_blocks_index).filter(
+            "range",
+            timestamp={
+                "gte": utils.to_epoch_millis(start_date),
+                "lt": utils.to_epoch_millis(end_date),
+            },
+        ).sort('timestamp').params(preserve_order=True)
 
         # We use scan() instead of execute() to fetch all the records, and wrap it with a
         # list() to pull everything in memory. As long as we fetch data in buckets of
         # limited sizes, memory is not a problem.
-        result = list(search.params(preserve_order=True).scan())
+        result = list(search.scan())
         blocks = [
             PowerBlock(
                 # lilox
@@ -285,12 +287,12 @@ class Streamer:
         redis_client = redis.Redis(config.REDIS_HOST)
 
         # ElasticSearch (upstream)
-        es_client = Search(using=Elasticsearch(hosts=[config.ES_HOST]))
+        self.es = Elasticsearch(hosts=[config.ES_HOST])
 
         self.fetcher = PowerBlockFetcher(
             redis_client=redis_client,
-            es_client=es_client,
-            es_index=config.ES_INDEX,
+            es=self.es,
+            power_blocks_index=config.ES_POWER_BLOCKS_INDEX,
             redis_ttl_sec=config.REDIS_TTL_SEC
         )
 
@@ -298,10 +300,11 @@ class Streamer:
         '''
         fetch events between (start_date, end_date)
         '''
+
         power_blocks = self.fetcher.fetch(start_date, end_date)
 
         json_power_blocks = [
-            json.dumps(power_block)
+            json.dumps(power_block.dict())
             for power_block in power_blocks
         ]
 
@@ -317,15 +320,36 @@ class Streamer:
 
         self.streaming = True
 
-        # fetch 1 sec
-        # seconds_in_bucket = BUCKET_TIMEDELTA.total_seconds()
-        # end_date = start_date + timedelta(seconds=seconds_in_bucket)
-        end_date = start_date + timedelta(seconds=10)
-        power_blocks = self.fetcher.fetch(start_date, end_date)
-        print(f'lilo ----------- power_blocks: {power_blocks}')
+        # wait for data with timestamp >= start_date
+        # --------------------------------------------
+        # get item with latest timestamp
+        s = Search(using=self.es, index=config.ES_POWER_BLOCKS_INDEX).filter(
+            "range", timestamp={"gte": utils.to_epoch_millis(start_date)},
+        ).sort('timestamp')
 
-        # while self.streaming:
-        #     pass
+        s = s[0:1]  # we only need 1
+
+        while True:
+            if not self.streaming:
+                return  # stop streaming
+
+            result = list(s.execute())
+            if len(result) > 0:
+                break
+            print(f'no data yet at start_date: {start_date}')
+            time.sleep(0.1)
+
+        # start streaming
+        # --------------------------------------------
+        while self.streaming:
+            if not self.streaming:
+                return # stop streaming
+            
+            # fetch 1 sec
+            end_date = start_date + timedelta(seconds=1)
+            power_blocks = self.fetcher.fetch(start_date, end_date)
+            print(f'lilo ----------- len(power_blocks): {len(power_blocks)}')
+            return # lilo
 
     def pause(self, sid: str):
         '''

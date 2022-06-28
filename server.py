@@ -82,18 +82,21 @@ if __name__ == "__main__":
     time.sleep(3)  # sec
     # data_generator.stop()
 
-    print('starting monitor backend server ... ')
     server = MonitorServer()
+    # print('starting monitor backend server ... ')
     # server.start()
 
+    # TEST
     sid = 'lilo'
     server.on_connect(sid=sid, environ={})
 
-    # end_date = datetime.now(tz=timezone.utc)
-    # start_date = end_date - timedelta(seconds=1)
-    # server.on_fetch(sid=sid, start_date=start_date, end_date=end_date)
+    if False:
+        end_date = datetime.now(tz=timezone.utc)
+        start_date = end_date - timedelta(seconds=1)
+        server.on_fetch(sid=sid, start_date=start_date, end_date=end_date)
 
-    start_date = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
-    server.on_stream(sid=sid, start_date=start_date)
+    if True:
+        start_date = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
+        server.on_stream(sid=sid, start_date=start_date)
 
     input("press ctrl-c to exit\n")

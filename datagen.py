@@ -19,7 +19,7 @@ class PowerBlock(Document):
     power = Integer(required=True)
 
     class Index:
-        name = config.ES_INDEX
+        name = config.ES_POWER_BLOCKS_INDEX
         settings = {
             "number_of_shards": 2,
         }
