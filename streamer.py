@@ -133,33 +133,38 @@ class GenericFetcher(abc.ABC, Generic[T]):
             cache_key = self.bucket_cache_key(bucket)
             cached_raw_value = self.get_redis_client().get(cache_key)
             if cached_raw_value is not None:
+                # cache hit
+                print(f'<<< cache hit')
                 records += pydantic.parse_raw_as(
                     list[self.get_model_type()],
                     cached_raw_value  # type: ignore
                 )
                 continue
 
+            # cache miss
             # Fetch the value from the upstream
             # lilo: mget(es)?
+            print('<<< fetch data from upstream')
             values = self.get_values_from_upstream(bucket)
 
             whole_bucket_fetched = len(
-                values) > 0 and values[-1].timestamp == utils.to_epoch_millisec(bucket.end)
+                values) > 0 and values[-1].timestamp == utils.to_epoch_millisec(bucket.end) - 100
 
             # lilo: data may not be available yet in upstream (e.g: start_date/end_date in the future)
             # (trim empty results)
 
             # Save the value to the cache
-            # lilo: mset(redis)?
-            raw_values = json.dumps(
-                values,
-                separators=(",", ":"),
-                default=pydantic_encoder)
+            if whole_bucket_fetched:
+                # lilo: mset(redis)?
+                raw_values = json.dumps(
+                    values,
+                    separators=(",", ":"),
+                    default=pydantic_encoder)
 
-            self.get_redis_client().set(
-                cache_key,
-                raw_values,
-                ex=self.get_cache_ttl(bucket))
+                self.get_redis_client().set(
+                    cache_key,
+                    raw_values,
+                    ex=self.get_cache_ttl(bucket))
 
             records += values
 
@@ -235,7 +240,6 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         return self.redis_ttl_sec
 
     def get_values_from_upstream(self, bucket: Bucket) -> List[PowerBlock]:
-        print('<<< fetch data from upstream')
         return self.fetch_power_blocks(bucket.start, bucket.end)
 
     # ----------------------------------------------------------------------------------
