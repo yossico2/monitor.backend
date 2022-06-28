@@ -90,13 +90,16 @@ if __name__ == "__main__":
     sid = 'lilo'
     server.on_connect(sid=sid, environ={})
 
+    # TEST fetch
     if False:
         end_date = datetime.now(tz=timezone.utc)
         start_date = end_date - timedelta(seconds=1)
         server.on_fetch(sid=sid, start_date=start_date, end_date=end_date)
 
+    # TEST stream
     if True:
-        start_date = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
+        # start_date = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
+        start_date = datetime.now(tz=timezone.utc)
         server.on_stream(sid=sid, start_date=start_date)
 
     input("press ctrl-c to exit\n")

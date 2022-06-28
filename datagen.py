@@ -12,7 +12,7 @@ import utils
 DEBUG = False
 
 
-class PowerBlock(Document):
+class PowerBlock_Document(Document):
 
     timestamp = Date(required=True, format="epoch_millis")
     frequency = Float(required=True)
@@ -26,7 +26,7 @@ class PowerBlock(Document):
 
     def save(self, ** kwargs):
         self.power = len(self.body.split())
-        return super(PowerBlock, self).save(** kwargs)
+        return super(PowerBlock_Document, self).save(** kwargs)
 
 
 def align_block_start(start_date: datetime) -> datetime:
@@ -45,7 +45,7 @@ class DataGenerator:
         self.stop_flag = False
 
         # create the mappings in elasticsearch
-        PowerBlock.init()
+        PowerBlock_Document.init()
 
     def start(self, start_date: datetime):
 
@@ -61,7 +61,7 @@ class DataGenerator:
 
     def generate_data(self, start_date: datetime):
         '''
-        generate PowerBlock objects
+        generate PowerBlock_Document objects
         bulk save to es every 1 sec.
         '''
 
@@ -69,8 +69,8 @@ class DataGenerator:
 
         # start_date and timedelta
         # timestamp as total milliseconds since epoch
-        epoch_millis = utils.to_epoch_millis(align_block_start(start_date))
-        time_delta = 100
+        epoch_millisec = utils.to_epoch_millisec(align_block_start(start_date))
+        time_delta = 100 # ms
 
         # generate data
         while not self.stop_flag:
@@ -79,18 +79,18 @@ class DataGenerator:
             if DEBUG:
                 timing_start = time.time()
 
-            # aggregate PowerBlock objects for bulk index
+            # collect PowerBlock_Document objects for bulk index
             power_blocks = []
 
             for i in range(10):  # bulk 10 objects every 1 sec.
                 power_blocks.append(
-                    PowerBlock(
-                        timestamp=epoch_millis,
+                    PowerBlock_Document(
+                        timestamp=epoch_millisec,
                         frequency=random.randrange(1e3, 40e9),
                         power=random.randrange(10, 100)))
 
                 time.sleep(0.1)  # sleep 100ms
-                epoch_millis += time_delta
+                epoch_millisec += time_delta
 
             # bulk index
             bulk(self.connection, (b.to_dict(True) for b in power_blocks))

@@ -143,8 +143,8 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
             records += values
 
-        start_date_ms = utils.to_epoch_millis(start_date)
-        end_date_ms = utils.to_epoch_millis(end_date)
+        start_date_ms = utils.to_epoch_millisec(start_date)
+        end_date_ms = utils.to_epoch_millisec(end_date)
         hits = [record for record in records if start_date_ms <=
                 record.timestamp < end_date_ms]
         return hits
@@ -215,7 +215,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
 
     def get_cache_key(self, bucket: Bucket) -> str:
         '''return the cache key by the bucket start date.'''
-        epoch_millis = utils.to_epoch_millis(bucket.start)
+        epoch_millis = utils.to_epoch_millisec(bucket.start)
         return f'power_blocks:{epoch_millis}'
 
     def get_cache_ttl(self, bucket: Bucket):
@@ -246,8 +246,8 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         search = Search(using=self.es, index=self.power_blocks_index).filter(
             "range",
             timestamp={
-                "gte": utils.to_epoch_millis(start_date),
-                "lt": utils.to_epoch_millis(end_date),
+                "gte": utils.to_epoch_millisec(start_date),
+                "lt": utils.to_epoch_millisec(end_date),
             },
         ).sort('timestamp').params(preserve_order=True)
 
@@ -324,7 +324,7 @@ class Streamer:
         # --------------------------------------------
         # get item with latest timestamp
         s = Search(using=self.es, index=config.ES_POWER_BLOCKS_INDEX).filter(
-            "range", timestamp={"gte": utils.to_epoch_millis(start_date)},
+            "range", timestamp={"gte": utils.to_epoch_millisec(start_date)},
         ).sort('timestamp')
 
         s = s[0:1]  # we only need 1
@@ -336,8 +336,9 @@ class Streamer:
             result = list(s.execute())
             if len(result) > 0:
                 break
+
             print(f'no data yet at start_date: {start_date}')
-            time.sleep(0.1)
+            time.sleep(1)
 
         # start streaming
         # --------------------------------------------
