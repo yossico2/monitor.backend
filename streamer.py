@@ -134,7 +134,8 @@ class GenericFetcher(abc.ABC, Generic[T]):
             cached_raw_value = self.get_redis_client().get(cache_key)
             if cached_raw_value is not None:
                 # cache hit
-                print(f'<<< cache hit')
+                if config.DEBUG_STREAMER:
+                    print(f'<<< cache hit')
                 records += pydantic.parse_raw_as(
                     list[self.get_model_type()],
                     cached_raw_value  # type: ignore
@@ -144,7 +145,8 @@ class GenericFetcher(abc.ABC, Generic[T]):
             # cache miss
             # Fetch the value from the upstream
             # lilo: mget(es)?
-            print('<<< fetch data from upstream')
+            if config.DEBUG_STREAMER:
+                print('<<< fetch data from upstream')
             values = self.get_values_from_upstream(bucket)
 
             whole_bucket_fetched = len(
@@ -292,7 +294,11 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
 
 
 class Streamer:
-    def __init__(self, sid: str, sio: socketio.Server) -> None:
+    def __init__(
+        self,
+        sid: str,
+        sio: socketio.Server
+    ) -> None:
 
         # SocketIO
         self.sid = sid  # sio client socket id
@@ -351,7 +357,8 @@ class Streamer:
             if len(result) > 0:
                 break  # done: we have es data available for start_date
 
-            print(f'no data available yet at: {start_date}')
+            if config.DEBUG_STREAMER:
+                print(f'no data available yet at: {start_date}')
             time.sleep(1)  # wait 1 sec for data to arrive
 
     def stream(self, start_date: datetime):
