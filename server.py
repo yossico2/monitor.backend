@@ -98,7 +98,6 @@ if __name__ == "__main__":
 
     # TEST stream
     if True:
-        # start_date = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
         start_date = datetime.now(tz=timezone.utc)
         server.on_stream(sid=sid, start_date=start_date)
 

@@ -314,43 +314,43 @@ class Streamer:
         '''
         start streamimg events from start_date
         '''
-        # lilo:TODO
         if self.streaming:
             raise RuntimeError('already streaming!')
 
         self.streaming = True
 
-        # wait for data with timestamp >= start_date
-        # --------------------------------------------
-        # get item with latest timestamp
-        s = Search(using=self.es, index=config.ES_POWER_BLOCKS_INDEX).filter(
-            "range", timestamp={"gte": utils.to_epoch_millisec(start_date)},
-        ).sort('timestamp')
-
-        s = s[0:1]  # we only need 1
-
+        # wait for es data with timestamp >= start_date
+        # ----------------------------------------------
         while True:
+
             if not self.streaming:
                 return  # stop streaming
+
+            # get item with latest timestamp
+            s = Search(using=self.es, index=config.ES_POWER_BLOCKS_INDEX).filter(
+                "range", timestamp={"gte": utils.to_epoch_millisec(start_date)},
+            ).sort('timestamp')
+
+            s = s[0:1]  # we only need one
 
             result = list(s.execute())
             if len(result) > 0:
                 break
 
             print(f'no data yet at start_date: {start_date}')
-            time.sleep(1)
+            time.sleep(1)  # wait 1 sec for data to arrive
 
         # start streaming
-        # --------------------------------------------
+        # ----------------------------------------------
         while self.streaming:
             if not self.streaming:
-                return # stop streaming
-            
+                return  # stop streaming
+
             # fetch 1 sec
             end_date = start_date + timedelta(seconds=1)
             power_blocks = self.fetcher.fetch(start_date, end_date)
             print(f'lilo ----------- len(power_blocks): {len(power_blocks)}')
-            return # lilo
+            return  # lilo
 
     def pause(self, sid: str):
         '''
