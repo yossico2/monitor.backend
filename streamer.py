@@ -25,8 +25,6 @@ import logging
 logger = logging.getLogger(__name__)
 #lilo: logging.basicConfig(level=logging.DEBUG)
 
-BUCKET_TIMEDELTA = timedelta(seconds=10)
-
 
 class TimestampModel(BaseModel):
     '''
@@ -36,10 +34,15 @@ class TimestampModel(BaseModel):
     timestamp: int
 
 
+# bucket size in time units
+BUCKET_TIMEDELTA = timedelta(seconds=1)
+
+
 class Bucket(BaseModel):
     '''
-    Model to represent a bucket, the unit of fetching data.
+    A bucket is the unit of fetching/caching data.
     '''
+
     start: datetime
 
     @property
@@ -73,7 +76,9 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
     Fetch and return the list of records between start_date (inclusive) and end_date (exclusive).
 
-    The fetcher uses cached records if available. Fetch records from the upstream if not in cache and update the cache.
+    The fetcher uses cached records if available. 
+
+    If not found in cache, records are fetched from the upstream (es) and the cache is updated.
 
     Notice the following things.
     - We define the GenericFetcher as an abstract base class (inherited from ABC)
@@ -87,7 +92,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
     '''
 
     @abc.abstractmethod
-    def get_cache_key(self, bucket: Bucket) -> str:
+    def bucket_cache_key(self, bucket: Bucket) -> str:
         raise NotImplementedError()
 
     @abc.abstractmethod
@@ -102,23 +107,35 @@ class GenericFetcher(abc.ABC, Generic[T]):
     def get_redis_client(self):
         raise NotImplementedError()
 
+    model_type = None
+
+    def get_model_type(self) -> Type:
+        '''
+        Python non-documented black magic to fetch current model.
+        Ref: https://stackoverflow.com/a/60984681
+        '''
+        if not self.model_type:
+            parametrized_generic_fetcher = self.__orig_bases__[
+                0]  # type: ignore
+            self.model_type = typing.get_args(parametrized_generic_fetcher)[0]
+        return self.model_type
+
     def fetch(self, start_date: datetime, end_date: datetime) -> List[T]:
 
-        # initialize a list of (empty) buckets in a date range
+        # initialize a list of buckets in the date range
         buckets = self._init_buckets(start_date, end_date)
-
-        model_type = self._get_model_type()
 
         records: list[T] = []
         for bucket in buckets:
 
             # Check if there's anything in cache
             # lilo: mget(redis)?
-            cache_key = self.get_cache_key(bucket)
+            cache_key = self.bucket_cache_key(bucket)
             cached_raw_value = self.get_redis_client().get(cache_key)
             if cached_raw_value is not None:
                 records += pydantic.parse_raw_as(
-                    list[model_type], cached_raw_value  # type: ignore
+                    list[self.get_model_type()],
+                    cached_raw_value  # type: ignore
                 )
                 continue
 
@@ -126,7 +143,10 @@ class GenericFetcher(abc.ABC, Generic[T]):
             # lilo: mget(es)?
             values = self.get_values_from_upstream(bucket)
 
-            # lilo: data may not be available yet in upstream (future end_date)
+            whole_bucket_fetched = len(
+                values) > 0 and values[-1].timestamp == utils.to_epoch_millisec(bucket.end)
+
+            # lilo: data may not be available yet in upstream (e.g: start_date/end_date in the future)
             # (trim empty results)
 
             # Save the value to the cache
@@ -148,14 +168,6 @@ class GenericFetcher(abc.ABC, Generic[T]):
         hits = [record for record in records if start_date_ms <=
                 record.timestamp < end_date_ms]
         return hits
-
-    def _get_model_type(self) -> Type:
-        '''
-        Python non-documented black magic to fetch current model.
-        Ref: https://stackoverflow.com/a/60984681
-        '''
-        parametrized_generic_fetcher = self.__orig_bases__[0]  # type: ignore
-        return typing.get_args(parametrized_generic_fetcher)[0]
 
     def _init_buckets(self, start_date: datetime, end_date: datetime) -> List[Bucket]:
         '''
@@ -213,10 +225,10 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
     def get_redis_client(self):
         return self.redis_client
 
-    def get_cache_key(self, bucket: Bucket) -> str:
+    def bucket_cache_key(self, bucket: Bucket) -> str:
         '''return the cache key by the bucket start date.'''
-        epoch_millis = utils.to_epoch_millisec(bucket.start)
-        return f'power_blocks:{epoch_millis}'
+        start_epoch_millisec = utils.to_epoch_millisec(bucket.start)
+        return f'power_blocks:{start_epoch_millisec}'
 
     def get_cache_ttl(self, bucket: Bucket):
         # all buckets have the same ttl
@@ -311,45 +323,14 @@ class Streamer:
 
         self.sio.emit('power_blocks', data=json_power_blocks, to=self.sid)
 
-    def stream(self, start_date: datetime):
-        '''
-        start streamimg events from start_date
-        '''
-        if self.streaming:
-            raise RuntimeError('already streaming!')
-
-        self.streaming = True
-
-        # wait for es data with timestamp >= start_date
-        self._wait_for_es_data(start_date)
-
-        # start streaming
-        moving_start_date = start_date
-        while self.streaming:
-            if not self.streaming:
-                return  # stop streaming
-
-            # fetch timing
-            if config.DEBUG_STREAMER:
-                timing_start = time.time()
-
-            # fetch 1 sec
-            end_date = moving_start_date + timedelta(seconds=1)
-            power_blocks = self.fetcher.fetch(moving_start_date, end_date)
-            # print(f'lilo ----------- len(power_blocks): {len(power_blocks)}')
-
-            # fetch timing
-            if config.DEBUG_STREAMER:
-                duration_ms = round(1000*(time.time() - timing_start))
-                print(
-                    f'fetched {len(power_blocks)} power_blocks (duration: {duration_ms} ms)')
-
-            # lilo
-            # return
-            time.sleep(1)
-            moving_start_date = end_date + timedelta(microseconds=100000) # 100 ms
-
     def _wait_for_es_data(self, start_date: datetime):
+        '''
+        Given start_date wait until a whole bucket is available for fetching from upstream.
+
+        (this introduces an inherented latency of bucket-size)
+        '''
+
+        bucket = Bucket(start=start_date)
 
         while True:
             if not self.streaming:
@@ -357,7 +338,7 @@ class Streamer:
 
             # get item with latest timestamp
             s = Search(using=self.es, index=config.ES_POWER_BLOCKS_INDEX).filter(
-                "range", timestamp={"gte": utils.to_epoch_millisec(start_date)},
+                "range", timestamp={"gte": utils.to_epoch_millisec(bucket.end)},
             ).sort('timestamp')
 
             s = s[0:1]  # we only need one
@@ -368,6 +349,49 @@ class Streamer:
 
             print(f'no data available yet at: {start_date}')
             time.sleep(1)  # wait 1 sec for data to arrive
+
+    def stream(self, start_date: datetime):
+        '''
+        start streamimg events from start_date
+        '''
+
+        # fail if already streaming
+        if self.streaming:
+            raise RuntimeError('already streaming!')
+        self.streaming = True
+
+        # wait for es data with timestamp >= start_date
+        self._wait_for_es_data(start_date)
+
+        # start streaming
+        while self.streaming:
+            if not self.streaming:
+                return  # stop streaming
+
+            # timing
+            if config.DEBUG_STREAMER:
+                timing_start = time.time()
+
+            # fetch 1 sec
+            end_date = start_date + timedelta(seconds=1)
+            power_blocks = self.fetcher.fetch(start_date, end_date)
+            # print(f'lilo ----------- len(power_blocks): {len(power_blocks)}')
+
+            # timing
+            if config.DEBUG_STREAMER:
+                duration_ms = round(1000*(time.time() - timing_start))
+                print(
+                    f'fetched {len(power_blocks)} power_blocks (duration: {duration_ms} ms)')
+
+            # lilo: TODO - to_json + sio.emit
+
+            time.sleep(1)
+            if len(power_blocks) > 0:
+                # +100 ms
+                new_start_timestamp = power_blocks[-1].timestamp + 100
+                start_date = datetime.fromtimestamp(
+                    new_start_timestamp / 1e3,
+                    tz=timezone.utc)
 
     def pause(self):
         '''
