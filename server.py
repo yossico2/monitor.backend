@@ -3,7 +3,7 @@ import signal
 import socketio
 import eventlet
 import threading
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict
 from streamer import Streamer
 
@@ -36,7 +36,7 @@ class MonitorServer:
         eventlet.wsgi.server(eventlet.listen(('', config.SERVER_PORT)), app)
 
     def on_connect(self, sid: str, environ):
-        print(f'client connected {sid}')
+        print(f'client connected (sid: {sid})')
         with self._clients_lock:
             self._clients[sid] = Streamer(sid=sid, sio=self.sio)
 
@@ -72,16 +72,15 @@ class MonitorServer:
 
 if __name__ == "__main__":
 
-    # simulate data
+    # simulate data into es
     import time
     from datagen import DataGenerator
-    print('generating data to es ... ')
     data_generator = DataGenerator(es_host=config.ES_HOST)
     data_generator.start(start_date=datetime.now(tz=timezone.utc))
-    # input("press ctrl-c to exit\n")
-    # time.sleep(3)  # sec
-    # data_generator.stop()
+    time.sleep(1)
+    data_generator.stop()
 
+    # start monitor server
     server = MonitorServer()
     # print('starting monitor backend server ... ')
     # server.start()
@@ -92,17 +91,19 @@ if __name__ == "__main__":
 
     # TEST fetch
     if False:
+        print('fetch TEST:')
         end_date = datetime.now(tz=timezone.utc)
         start_date = end_date - timedelta(seconds=1)
         server.on_fetch(
             sid=sid,
             start_date=start_date,
             end_date=end_date)
+        # input("press any key to exit\n")
 
     # TEST stream
     if True:
+        print('stream TEST:')
         server.on_stream(
             sid=sid,
             start_date=datetime.now(tz=timezone.utc))
 
-    input("press ctrl-c to exit\n")

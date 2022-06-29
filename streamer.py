@@ -5,8 +5,6 @@ import typing
 from datetime import datetime, timedelta, timezone
 from typing import Generic, Type, TypeVar, List
 
-import redis
-
 from elasticsearch.client import Elasticsearch
 from elasticsearch_dsl import Search
 
@@ -14,6 +12,7 @@ import pydantic
 from pydantic import BaseModel, validator
 from pydantic.json import pydantic_encoder
 
+import redis
 import socketio
 
 import config
@@ -28,9 +27,11 @@ class TimestampModel(BaseModel):
     '''
     Base model for any records having timestamps.
     '''
-    # timestamp: datetime
-    timestamp: int
+    timestamp: datetime
 
+
+PERIOD_MS = 100  # 100 ms
+PERIOD_TIMEDELTA = timedelta(milliseconds=PERIOD_MS)
 
 # bucket size in time units
 BUCKET_TIMEDELTA = timedelta(seconds=1)
@@ -48,10 +49,13 @@ class Bucket(BaseModel):
         return self.start + BUCKET_TIMEDELTA
 
     @validator("start")
-    def align_start(cls, v: datetime) -> datetime:
+    def align_start(cls, dt: datetime) -> datetime:
         '''Align bucket start date.'''
         seconds_in_bucket = BUCKET_TIMEDELTA.total_seconds()
-        return datetime.fromtimestamp((v.timestamp() // seconds_in_bucket * seconds_in_bucket), timezone.utc)
+        aligned_start_timestamp = dt.timestamp() // seconds_in_bucket * seconds_in_bucket
+        aligned_start = datetime.fromtimestamp(
+            aligned_start_timestamp, tz=dt.tzinfo)
+        return aligned_start
 
     def next(self) -> "Bucket":
         '''Return the next bucket.'''
@@ -120,21 +124,24 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
     def fetch(self, start_date: datetime, end_date: datetime) -> List[T]:
 
+        # fetch timing
+        if config.DEBUG_STREAMER:
+            fetch_timing_start = time.time()
+
         # initialize a list of buckets in the date range
         buckets = self._init_buckets(start_date, end_date)
 
-        records: list[T] = []
+        power_blocks: list[T] = []
         for bucket in buckets:
 
             # Check if there's anything in cache
-            # lilo: mget(redis)?
             cache_key = self.bucket_cache_key(bucket)
             cached_raw_value = self.get_redis_client().get(cache_key)
             if cached_raw_value is not None:
                 # cache hit
                 if config.DEBUG_STREAMER:
                     print(f'<<< cache hit')
-                records += pydantic.parse_raw_as(
+                power_blocks += pydantic.parse_raw_as(
                     list[self.get_model_type()],
                     cached_raw_value  # type: ignore
                 )
@@ -142,20 +149,17 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
             # cache miss
             # Fetch the value from the upstream
-            # lilo: mget(es)?
-            if config.DEBUG_STREAMER:
-                print('<<< fetch data from upstream')
             values = self.get_values_from_upstream(bucket)
 
-            whole_bucket_fetched = len(
-                values) > 0 and values[-1].timestamp == utils.to_epoch_millisec(bucket.end) - 100
+            # DEBUG
+            # if config.DEBUG_STREAMER:
+            #     print(f'<<< data fetched from upstream ({len(values)} items)')
 
-            # lilo: data may not be available yet in upstream (e.g: start_date/end_date in the future)
-            # (trim empty results)
+            whole_bucket_fetched = len(
+                values) > 0 and values[-1].timestamp == (bucket.end - PERIOD_TIMEDELTA)
 
             # Save the value to the cache
             if whole_bucket_fetched:
-                # lilo: mset(redis)?
                 raw_values = json.dumps(
                     values,
                     separators=(",", ":"),
@@ -166,13 +170,22 @@ class GenericFetcher(abc.ABC, Generic[T]):
                     raw_values,
                     ex=self.get_cache_ttl(bucket))
 
-            records += values
+            power_blocks += values
 
-        start_date_ms = utils.to_epoch_millisec(start_date)
-        end_date_ms = utils.to_epoch_millisec(end_date)
-        hits = [record for record in records if start_date_ms <=
-                record.timestamp < end_date_ms]
-        return hits
+        # lilox
+        # ms_since_epoch_start = utils.datetime_to_ms_since_epoch(start_date)
+        # ms_since_epoch_end = utils.datetime_to_ms_since_epoch(end_date)
+        power_blocks_in_range = [
+            pb for pb in power_blocks if start_date <= pb.timestamp < end_date
+        ]
+
+        # fetch timing
+        if config.DEBUG_STREAMER and len(power_blocks_in_range) > 0:
+            duration_ms = round(1000*(time.time() - fetch_timing_start))
+            print(
+                f'{len(power_blocks_in_range)} power_blocks fetched (duration: {duration_ms} ms)')
+
+        return power_blocks_in_range
 
     def _init_buckets(self, start_date: datetime, end_date: datetime) -> List[Bucket]:
         '''
@@ -232,8 +245,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
 
     def bucket_cache_key(self, bucket: Bucket) -> str:
         '''return the cache key by the bucket start date.'''
-        start_epoch_millisec = utils.to_epoch_millisec(bucket.start)
-        return f'power_blocks:{start_epoch_millisec}'
+        return f'power_blocks:{utils.datetime_to_ms_since_epoch(bucket.start)}'
 
     def get_cache_ttl(self, bucket: Bucket):
         # all buckets have the same ttl
@@ -257,14 +269,17 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         instances, and return them as a list.
         '''
 
-        logger.info(
-            f"fetch power_blocks from the upstream for ({start_date}, {end_date})")
+        # DEBUG
+        # if config.DEBUG_STREAMER:
+        #     start = utils.datetime_to_ms_since_epoch(start_date)
+        #     end = utils.datetime_to_ms_since_epoch(end_date)
+        #     print(f'fetching from upstream (start: {start}, end: {end})')
 
         search = Search(using=self.es, index=self.power_blocks_index).filter(
-            "range",
+            'range',
             timestamp={
-                "gte": utils.to_epoch_millisec(start_date),
-                "lt": utils.to_epoch_millisec(end_date),
+                "gte": utils.datetime_to_ms_since_epoch(start_date),
+                "lt": utils.datetime_to_ms_since_epoch(end_date),
             },
         ).sort('timestamp').params(preserve_order=True)
 
@@ -274,10 +289,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         result = list(search.scan())
         blocks = [
             PowerBlock(
-                # lilox
-                # timestamp=datetime.fromtimestamp(record.timestamp).replace(tzinfo=timezone.utc),
-
-                timestamp=record.timestamp,
+                timestamp=utils.ms_since_epoch_to_datetime(record.timestamp),
                 frequency=record["frequency"],
                 power=record["power"],
             )
@@ -324,44 +336,51 @@ class Streamer:
 
         power_blocks = self.fetcher.fetch(start_date, end_date)
 
-        json_power_blocks = [
-            json.dumps(power_block.dict())
+        power_blocks_json = [
+            json.dumps(power_block, default=pydantic_encoder)
             for power_block in power_blocks
         ]
 
-        self.sio.emit('power_blocks', data=json_power_blocks, to=self.sid)
+        self.sio.emit('power_blocks', data=power_blocks_json, to=self.sid)
 
-    def _wait_for_es_data(self, start_date: datetime):
+    def _upstream_has_data_after_date(self, dt: datetime):
+        # get data item with timestamp greater than dt
+        s = Search(using=self.es, index=config.ES_POWER_BLOCKS_INDEX).filter(
+            "range", timestamp={"gte": utils.datetime_to_ms_since_epoch(dt)},
+        ).sort('timestamp')
+
+        s = s[0:1]  # we only need one
+
+        result = list(s.execute())
+        if len(result) > 0:
+            return True
+
+        # NO data available at upstream after dt
+        return False
+
+    def _wait_for_es_data(self, dt: datetime):
         '''
-        Given start_date wait until a whole bucket is available for fetching from upstream.
+        Given dt wait until a whole bucket is available for fetching from upstream.
 
         (this introduces an inherented latency of bucket-size)
         '''
 
-        bucket = Bucket(start=start_date)
+        bucket = Bucket(start=dt)
 
         while True:
             if not self.streaming:
                 return  # stop streaming
 
-            # get item with latest timestamp
-            s = Search(using=self.es, index=config.ES_POWER_BLOCKS_INDEX).filter(
-                "range", timestamp={"gte": utils.to_epoch_millisec(bucket.end)},
-            ).sort('timestamp')
-
-            s = s[0:1]  # we only need one
-
-            result = list(s.execute())
-            if len(result) > 0:
-                break  # done: we have es data available for start_date
+            if self._upstream_has_data_after_date(bucket.end):
+                break  # upstream has data available
 
             if config.DEBUG_STREAMER:
-                print(f'no data available yet at: {start_date}')
+                print(f'no data available yet at: {dt}')
             time.sleep(1)  # wait 1 sec for data to arrive
 
     def stream(self, start_date: datetime):
         '''
-        start streamimg events from start_date
+        start streamimg data points (PowerBlock objects) starting from start_date.
         '''
 
         # fail if already streaming
@@ -369,38 +388,63 @@ class Streamer:
             raise RuntimeError('already streaming!')
         self.streaming = True
 
+        # lilo
         # wait for es data with timestamp >= start_date
         self._wait_for_es_data(start_date)
 
         # start streaming
+        buffer: PowerBlock = []
+        last_emit_time_ms = 0
         while self.streaming:
             if not self.streaming:
                 return  # stop streaming
 
-            # timing
-            if config.DEBUG_STREAMER:
-                timing_start = time.time()
+            ref_time_ms = utils.datetime_to_ms_since_epoch(
+                datetime.now(tz=timezone.utc))
 
             # fetch 1 sec
             end_date = start_date + timedelta(seconds=1)
             power_blocks = self.fetcher.fetch(start_date, end_date)
-            # print(f'lilo ----------- len(power_blocks): {len(power_blocks)}')
+            if len(power_blocks) == 0:
+                # either no data at range or
+                # data not available yet in upstream
+                # (e.g: start_date/end_date in the future)
+                if not self._upstream_has_data_after_date(end_date):
+                    # wait for data to be available in upstream
+                    time.sleep(0.1)
+                    continue
 
-            # timing
-            if config.DEBUG_STREAMER:
-                duration_ms = round(1000*(time.time() - timing_start))
-                print(
-                    f'fetched {len(power_blocks)} power_blocks (duration: {duration_ms} ms)')
+                # advance range (skip no data)
+                start_date = end_date
+                continue
 
-            # lilo: TODO - to_json + sio.emit
+            # stream power_blocks
+            buffer.append(power_blocks)
 
-            time.sleep(1)
-            if len(power_blocks) > 0:
-                # +100 ms
-                new_start_timestamp = power_blocks[-1].timestamp + 100
-                start_date = datetime.fromtimestamp(
-                    new_start_timestamp / 1e3,
-                    tz=timezone.utc)
+            for power_block in buffer:
+
+                if not self.streaming:
+                    return
+
+                if last_emit_time_ms > 0:
+                    process_time = utils.datetime_to_ms_since_epoch(
+                        datetime.now(tz=timezone.utc)) - ref_time_ms
+                    sleep_time_ms = PERIOD_MS - process_time
+                    if sleep_time_ms > 0:
+                        time.sleep(sleep_time_ms/1000)
+                    elif sleep_time_ms < 0:
+                        print(f'### latency: {-sleep_time_ms} ms')
+
+                # if last_emit_time_ms > 0 and
+                power_block_json = json.dumps(
+                    power_block, default=pydantic_encoder)
+                self.sio.emit('power_blocks',
+                              data=power_block_json, to=self.sid)
+
+            # time.sleep(1)
+            # if len(power_blocks) > 0:
+            #     new_start_timestamp = power_blocks[-1].timestamp + PERIOD_MS
+            #     start_date = datetime.fromtimestamp(new_start_timestamp / 1e3, tz=timezone.utc)
 
     def pause(self):
         '''

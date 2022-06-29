@@ -4,10 +4,12 @@ import random
 import threading
 from elasticsearch_dsl import Document, Date, Integer, Float
 from elasticsearch_dsl.connections import connections
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from elasticsearch.helpers import bulk
 import config
 import utils
+
+PERIOD_MS = 100  # 100 ms
 
 
 class PowerBlock_Document(Document):
@@ -56,6 +58,8 @@ class DataGenerator:
         if not self.stop_flag:
             self.stop_flag = True
             self.event_thread_stop.wait()
+            if config.DEBUG_DATAGEN:
+                print(f'data generation stopped.')
 
     def generate_data(self, start_date: datetime):
         '''
@@ -65,10 +69,14 @@ class DataGenerator:
 
         self.event_thread_start.set()  # signal started
 
+        if config.DEBUG_DATAGEN:
+            print(
+                f'generating data to es (start_date: {utils.datetime_to_ms_since_epoch(start_date)})')
+
         # start_date and timedelta
-        # timestamp as total milliseconds since epoch
-        epoch_millisec = utils.to_epoch_millisec(align_block_start(start_date))
-        time_delta = 100  # ms
+        timestamp = utils.datetime_to_ms_since_epoch(
+            align_block_start(start_date))
+        time_delta = PERIOD_MS
 
         # generate data
         while not self.stop_flag:
@@ -83,21 +91,24 @@ class DataGenerator:
             for i in range(10):  # bulk 10 objects every 1 sec.
                 power_blocks.append(
                     PowerBlock_Document(
-                        timestamp=epoch_millisec,
+                        timestamp=timestamp,
                         frequency=random.randrange(1e3, 40e9),
                         power=random.randrange(10, 100)))
 
-                time.sleep(0.1)  # sleep 100ms
-                epoch_millisec += time_delta
+                # advance time
+                timestamp += time_delta
 
             # bulk index
-            bulk(self.connection, (b.to_dict(True) for b in power_blocks))
+            bulk(self.connection, (b.to_dict(True)
+                 for b in power_blocks), refresh='true')
 
             # bulk timing
             if config.DEBUG_DATAGEN:
                 duration_ms = round(1000*(time.time() - timing_start))
-                print(
-                    f'(bulk) fetched {len(power_blocks)} power_blocks (duration: {duration_ms} ms)')
+                print(f'es-bulk {len(power_blocks)} items ({duration_ms} ms)')
+            
+            # sleep 100ms
+            time.sleep(0.1)
 
         self.event_thread_stop.set()  # signal stopped
 
@@ -107,5 +118,5 @@ if __name__ == "__main__":
     print('generating data to es ... ')
     data_generator = DataGenerator(es_host=config.ES_HOST)
     data_generator.start(start_date=datetime.now(tz=timezone.utc))
-    time.sleep(3)  # sec
+    time.sleep(1)
     data_generator.stop()
