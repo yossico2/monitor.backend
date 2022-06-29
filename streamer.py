@@ -30,7 +30,7 @@ class TimestampModel(BaseModel):
     timestamp: datetime
 
 
-PERIOD_MS = 1000  # 100 ms
+PERIOD_MS = 100  # 100 ms
 PERIOD_TIMEDELTA = timedelta(milliseconds=PERIOD_MS)
 
 # bucket size in time units
@@ -393,14 +393,13 @@ class Streamer:
         self._wait_for_es_data(start_date)
 
         # start streaming
-        buffer: PowerBlock = []
+        power_blocks: PowerBlock = []
         while self.streaming:
             if not self.streaming:
                 return  # stop streaming
 
-            # processing_start_ms = utils.datetime_to_ms_since_epoch(
-            #     datetime.now(tz=timezone.utc))
-            start_ms = time.time()
+            # period start
+            fetch_start_time = time.time()
 
             # fetch 1 sec
             end_date = start_date + timedelta(seconds=1)
@@ -418,22 +417,23 @@ class Streamer:
                 start_date = end_date
                 continue
 
-            buffer += power_blocks
+            fetch_duration_ms = int(1000 * (time.time() - fetch_start_time))
+            print(f'fetch duration: {fetch_duration_ms} ms')
 
-            # stream power_blocks
-            for power_block in buffer:
+            # stream fetched power_blocks
+            for power_block in power_blocks:
 
                 if not self.streaming:
                     return
 
-                duration_ms = int(1000 * (time.time() - start_ms))
-                sleep_ms = PERIOD_MS - duration_ms
+                sleep_ms = PERIOD_MS - fetch_duration_ms
                 if sleep_ms > 0:
                     time.sleep(sleep_ms/1000)
                 elif sleep_ms < 0:
                     print(f'### latency: {-sleep_ms} ms')
 
-                power_block_json = json.dumps(power_block, default=pydantic_encoder)
+                power_block_json = json.dumps(
+                    power_block, default=pydantic_encoder)
                 self.sio.emit('power_blocks',
                               data=power_block_json,
                               to=self.sid)
