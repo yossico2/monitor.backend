@@ -124,10 +124,6 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
     def fetch(self, start_date: datetime, end_date: datetime) -> List[T]:
 
-        # fetch timing
-        if config.DEBUG_STREAMER:
-            fetch_timing_start = time.time()
-
         # initialize a list of buckets in the date range
         buckets = self._init_buckets(start_date, end_date)
 
@@ -146,8 +142,18 @@ class GenericFetcher(abc.ABC, Generic[T]):
                 continue
 
             # cache miss
-            # Fetch the value from the upstream
+            # fetch the value from the upstream
+
+            # fetch timing
+            if config.DEBUG_STREAMER:
+                fetch_timing_start = time.time()
+
             values = self.get_values_from_upstream(bucket)
+
+            # fetch timing
+            if config.DEBUG_STREAMER:
+                duration_ms = round(1000*(time.time() - fetch_timing_start))
+                print(f'{len(values)} items fetched ({duration_ms} ms)')
 
             whole_bucket_fetched = len(
                 values) > 0 and values[-1].timestamp == (bucket.end - PERIOD_TIMEDELTA)
@@ -169,12 +175,6 @@ class GenericFetcher(abc.ABC, Generic[T]):
         power_blocks_in_range = [
             pb for pb in power_blocks if start_date <= pb.timestamp < end_date
         ]
-
-        # fetch timing
-        if config.DEBUG_STREAMER and len(power_blocks_in_range) > 0:
-            duration_ms = round(1000*(time.time() - fetch_timing_start))
-            print(
-                f'fetched {len(power_blocks_in_range)} power_blocks (duration: {duration_ms} ms)')
 
         return power_blocks_in_range
 
@@ -361,6 +361,7 @@ class Streamer:
             if not self.streaming:
                 return  # stop streaming
 
+            #  fetch items
             power_blocks: PowerBlock = self.fetcher.fetch(start_date, end_date)
             if len(power_blocks) == 0:
                 # either no data at range or
@@ -390,14 +391,16 @@ class Streamer:
                               to=self.sid)
 
                 #  print timestamp of power_block
-                # if config.DEBUG_STREAMER:
-                ts = utils.datetime_to_ms_since_epoch(power_block.timestamp)
-                print(f'emit {ts}')
+                if config.DEBUG_STREAMER:
+                    ts = utils.datetime_to_ms_since_epoch(
+                        power_block.timestamp)
+                    print(f'emit {ts}')
 
                 time.sleep(PERIOD_MS/1000)
 
             # advance range (skip no data)
-            start_date = power_blocks[-1].timestamp + timedelta(milliseconds=PERIOD_MS)
+            start_date = power_blocks[-1].timestamp + \
+                timedelta(milliseconds=PERIOD_MS)
             end_date = start_date + timedelta(seconds=1)
 
     def pause(self):
