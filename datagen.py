@@ -70,13 +70,12 @@ class DataGenerator:
         self.event_thread_start.set()  # signal started
 
         if config.DEBUG_DATAGEN:
-            print(
-                f'generating data to es (start_date: {utils.datetime_to_ms_since_epoch(start_date)})')
+            ts = utils.datetime_to_ms_since_epoch(start_date)
+            print(f'datagen (start_date: {ts})')
 
         # start_date and timedelta
         timestamp = utils.datetime_to_ms_since_epoch(
             align_block_start(start_date))
-        time_delta = PERIOD_MS
 
         # generate data
         while not self.stop_flag:
@@ -96,7 +95,7 @@ class DataGenerator:
                         power=random.randrange(10, 100)))
 
                 # advance time
-                timestamp += time_delta
+                timestamp += PERIOD_MS
 
             # bulk index
             bulk(self.connection, (b.to_dict(True)
@@ -106,7 +105,7 @@ class DataGenerator:
             if config.DEBUG_DATAGEN:
                 duration_ms = round(1000*(time.time() - timing_start))
                 print(f'es-bulk {len(power_blocks)} items ({duration_ms} ms)')
-            
+
             # sleep 100ms
             time.sleep(0.1)
 

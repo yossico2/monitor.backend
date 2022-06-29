@@ -77,8 +77,8 @@ if __name__ == "__main__":
     from datagen import DataGenerator
     data_generator = DataGenerator(es_host=config.ES_HOST)
     data_generator.start(start_date=datetime.now(tz=timezone.utc))
-    time.sleep(1)
-    data_generator.stop()
+    # time.sleep(1)
+    # data_generator.stop()
 
     # start monitor server
     server = MonitorServer()

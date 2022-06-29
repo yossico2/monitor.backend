@@ -353,16 +353,14 @@ class Streamer:
             raise RuntimeError('already streaming!')
         self.streaming = True
 
+        # fetch 1 sec
+        end_date = start_date + timedelta(seconds=1)
+
         # start streaming
         while self.streaming:
             if not self.streaming:
                 return  # stop streaming
 
-            # period start
-            fetch_start_time = time.time()
-
-            # fetch 1 sec
-            end_date = start_date + timedelta(seconds=1)
             power_blocks: PowerBlock = self.fetcher.fetch(start_date, end_date)
             if len(power_blocks) == 0:
                 # either no data at range or
@@ -375,14 +373,10 @@ class Streamer:
 
                 # advance range (skip no data)
                 start_date = end_date
+                end_date = start_date + timedelta(seconds=1)
                 continue
 
-            fetch_duration_ms = int(1000 * (time.time() - fetch_start_time))
-            sleep_ms = PERIOD_MS - fetch_duration_ms
-            if sleep_ms > 0:
-                time.sleep(sleep_ms/1000)
-
-            # stream fetched power_blocks
+            # stream power_blocks
             for power_block in power_blocks:
 
                 if not self.streaming:
@@ -395,10 +389,16 @@ class Streamer:
                               data=power_block_json,
                               to=self.sid)
 
-                print(
-                    f'emit {utils.datetime_to_ms_since_epoch(power_block.timestamp)}')
+                #  print timestamp of power_block
+                # if config.DEBUG_STREAMER:
+                ts = utils.datetime_to_ms_since_epoch(power_block.timestamp)
+                print(f'emit {ts}')
 
                 time.sleep(PERIOD_MS/1000)
+
+            # advance range (skip no data)
+            start_date = power_blocks[-1].timestamp + timedelta(milliseconds=PERIOD_MS)
+            end_date = start_date + timedelta(seconds=1)
 
     def pause(self):
         '''
