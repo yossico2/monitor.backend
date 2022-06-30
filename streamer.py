@@ -124,44 +124,38 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
     def fetch(self, start_date: datetime, end_date: datetime) -> List[T]:
 
-        # initialize a list of buckets in the date range
+        # Initialize a list of buckets in range
         buckets = self._init_buckets(start_date, end_date)
 
-        power_blocks: list[T] = []
+        data_items: list[T] = []
         for bucket in buckets:
 
-            # Check if there's anything in cache
+            # Check if cache contains bucket
             cache_key = self.bucket_cache_key(bucket)
             cached_raw_value = self.get_redis_client().get(cache_key)
             if cached_raw_value is not None:
-                # cache hit
-                power_blocks += pydantic.parse_raw_as(
+
+                # Cache Hit
+                cached_items: list[T] = pydantic.parse_raw_as(
                     list[self.get_model_type()],
                     cached_raw_value  # type: ignore
                 )
+
+                data_items += cached_items
                 continue
 
-            # cache miss
-            # fetch the value from the upstream
+            # Cache Miss (fetch bucket from the upstream)
+            fetched_items = self.get_values_from_upstream(bucket)
 
-            # fetch timing
-            if config.DEBUG_STREAMER:
-                fetch_timing_start = time.time()
-
-            values = self.get_values_from_upstream(bucket)
-
-            # fetch timing
-            if config.DEBUG_STREAMER:
-                duration_ms = round(1000*(time.time() - fetch_timing_start))
-                print(f'{len(values)} items fetched ({duration_ms} ms)')
-
+            # save the value to the cache only when whole block fetched
+            # (partial blocks are not cached, thus will be fetched again when required)
             whole_bucket_fetched = len(
-                values) > 0 and values[-1].timestamp == (bucket.end - PERIOD_TIMEDELTA)
+                fetched_items) > 0 and fetched_items[-1].timestamp == (bucket.end - PERIOD_TIMEDELTA)
 
-            # Save the value to the cache
+            # Cache items
             if whole_bucket_fetched:
                 raw_values = json.dumps(
-                    values,
+                    fetched_items,
                     separators=(",", ":"),
                     default=pydantic_encoder)
 
@@ -170,13 +164,14 @@ class GenericFetcher(abc.ABC, Generic[T]):
                     raw_values,
                     ex=self.get_cache_ttl(bucket))
 
-            power_blocks += values
+            data_items += fetched_items
 
-        power_blocks_in_range = [
-            pb for pb in power_blocks if start_date <= pb.timestamp < end_date
+        # return only items in range
+        items_in_range = [
+            item for item in data_items if start_date <= item.timestamp < end_date
         ]
 
-        return power_blocks_in_range
+        return items_in_range
 
     def _init_buckets(self, start_date: datetime, end_date: datetime) -> List[Bucket]:
         '''
@@ -243,23 +238,19 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         return self.redis_ttl_sec
 
     def get_values_from_upstream(self, bucket: Bucket) -> List[PowerBlock]:
-        return self.fetch_power_blocks(bucket.start, bucket.end)
-
-    # ----------------------------------------------------------------------------------
-    # Query
-    # ----------------------------------------------------------------------------------
-
-    def fetch_power_blocks(
-            self,
-            start_date: datetime,
-            end_date: datetime) -> List[PowerBlock]:
         '''
-        Low-level query to fetch power_blocks from ElasticSearch.
-        Notice how it doesn't know anything about caching or date buckets. 
-        Its job is to pull some data from ElasticSearch, convert them to model 
+        Pull from ElasticSearch data items in bucket range, convert them to model 
         instances, and return them as a list.
         '''
 
+        start_date = bucket.start
+        end_date = bucket.end
+
+        # timing
+        if config.DEBUG_STREAMER:
+            fetch_timing_start = time.time()
+
+        # ElasticSearch query
         search = Search(using=self.es, index=self.power_blocks_index).filter(
             'range',
             timestamp={
@@ -280,6 +271,11 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
             )
             for record in result
         ]
+
+        # timing
+        if config.DEBUG_STREAMER:
+            duration_ms = round(1000*(time.time() - fetch_timing_start))
+            print(f'{len(blocks)} items fetched ({duration_ms} ms)')
 
         return blocks
 
