@@ -5,6 +5,7 @@ import eventlet
 import threading
 from threading import Timer
 from datetime import datetime, timedelta, timezone
+from dateutil import parser
 from typing import Dict
 from streamer import Streamer
 
@@ -58,11 +59,12 @@ class MonitorServer:
         client_streamer = self._clients.get(sid)
         client_streamer.fetch(start_date, end_date)
 
-    def on_stream(self, sid: str, start_date: datetime):
+    def on_stream(self, sid: str, start_date_str: str):
         '''
         start streamimg events from start_date
         '''
         client_streamer = self._clients.get(sid)
+        start_date = parser.parse(start_date_str)
         client_streamer.stream(start_date)
 
     def on_pause(self, sid: str):
@@ -86,22 +88,9 @@ class MonitorServer:
         client_streamer = self._clients.get(sid)
         client_streamer.stop()
 
-if __name__ == "__main__":
 
-    # simulate data into es
-    import time
-    from datagen import DataGenerator
-    data_generator = DataGenerator(es_host=config.ES_HOST)
-    data_generator.start(start_date=datetime.now(tz=timezone.utc))
-    # time.sleep(1)
-    # data_generator.stop()
-
-    # start monitor server
+def run_test_mode():
     server = MonitorServer()
-    # print('starting monitor backend server ... ')
-    # server.start()
-
-    # TEST
     sid = 'lilo'
     server.on_connect(sid=sid, environ={})
 
@@ -115,7 +104,7 @@ if __name__ == "__main__":
             start_date=start_date,
             end_date=end_date)
 
-    # lilo:set timer (pause)
+    # play/pause timer
     if True:
         def pause(paused):
             if paused:
@@ -137,3 +126,22 @@ if __name__ == "__main__":
             start_date=datetime.now(tz=timezone.utc))
 
     input("press any key\n")
+
+
+if __name__ == "__main__":
+
+    # simulate data into es
+    import time
+    from datagen import DataGenerator
+    data_generator = DataGenerator(es_host=config.ES_HOST)
+    data_generator.start(start_date=datetime.now(tz=timezone.utc))
+    # time.sleep(1)
+    # data_generator.stop()
+
+    if config.TEST_MODE:
+        run_test_mode()
+    else:
+        # start monitor server
+        server = MonitorServer()
+        print('starting monitor backend server ... ')
+        server.start()

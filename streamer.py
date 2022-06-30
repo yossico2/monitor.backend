@@ -323,7 +323,7 @@ class Streamer:
             for power_block in power_blocks
         ]
 
-        self.sio.emit('power_blocks', data=power_blocks_json, to=self.sid)
+        self.sio.emit('power-blocks', data=power_blocks_json, to=self.sid)
 
     def _upstream_has_data_after_date(self, date_ms: int):
         # get data item with timestamp greater than dt
@@ -361,7 +361,7 @@ class Streamer:
                 if not self.streaming:
                     return  # stop streaming
             if self.paused:
-                time.sleep(config.PERIOD_MS/1000)
+                self.sio.sleep(config.PERIOD_MS/1000)
                 continue  # pause
 
             #  fetch items
@@ -373,7 +373,7 @@ class Streamer:
                 # (e.g: start-date/end-date in the future)
                 if not self._upstream_has_data_after_date(end_date_ms):
                     # wait for data to be available in upstream
-                    time.sleep(config.PERIOD_MS/1000)
+                    self.sio.sleep(config.PERIOD_MS/1000)
                     continue
 
                 # advance range (skip no data)
@@ -388,20 +388,20 @@ class Streamer:
                     if not self.streaming:
                         return  # stop streaming
                 while self.paused:
-                    time.sleep(config.PERIOD_MS/1000)
+                    self.sio.sleep(config.PERIOD_MS/1000)
                     continue  # pause
 
                 power_block_json = json.dumps(
                     power_block, default=pydantic_encoder)
 
-                self.sio.emit('power_blocks',
+                self.sio.emit('power-blocks',
                               data=power_block_json, to=self.sid)
 
                 #  print timestamp of power_block
                 if config.DEBUG_STREAMER:
                     print(f'emit {power_block.timestamp}')
 
-                time.sleep(config.PERIOD_MS/1000)
+                self.sio.sleep(config.PERIOD_MS/1000)
 
             # advance range (skip no data)
             start_date_ms = power_blocks[-1].timestamp + config.PERIOD_MS
