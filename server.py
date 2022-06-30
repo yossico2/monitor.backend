@@ -28,10 +28,11 @@ class MonitorServer:
         self.sio = socketio.Server(cors_allowed_origins='*')
         self.sio.on('connect', self.on_connect)
         self.sio.on('disconnect', self.on_disconnect)
-        self.sio.on('fetch-events', self.on_fetch)
-        self.sio.on('stream-events', self.on_stream)
-        self.sio.on('pause-events', self.on_pause)
-        self.sio.on('play-events', self.on_play)
+        self.sio.on('pb-fetch', self.on_fetch)
+        self.sio.on('pb-stream', self.on_stream)
+        self.sio.on('pb-pause', self.on_pause)
+        self.sio.on('pb-play', self.on_play)
+        self.sio.on('pb-stop', self.on_stop)
 
     def start(self):
         app = socketio.WSGIApp(self.sio)
@@ -78,6 +79,12 @@ class MonitorServer:
         client_streamer = self._clients.get(sid)
         client_streamer.play()
 
+    def on_stop(self, sid: str):
+        '''
+        stop
+        '''
+        client_streamer = self._clients.get(sid)
+        client_streamer.stop()
 
 if __name__ == "__main__":
 
