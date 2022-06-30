@@ -275,7 +275,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         # timing
         if config.DEBUG_STREAMER:
             duration_ms = round(1000*(time.time() - fetch_timing_start))
-            print(f'{len(blocks)} items fetched ({duration_ms} ms)')
+            print(f'{len(blocks)} items fetched from upstream ({duration_ms} ms)')
 
         return blocks
 
