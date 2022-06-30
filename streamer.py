@@ -2,7 +2,7 @@ import abc
 import time
 import json
 import typing
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Generic, Type, TypeVar, List
 
 from elasticsearch.client import Elasticsearch
@@ -27,14 +27,13 @@ class TimestampModel(BaseModel):
     '''
     Base model for any records having timestamps.
     '''
-    timestamp: datetime
+    timestamp: int
 
 
 PERIOD_MS = 100  # 100 ms
-PERIOD_TIMEDELTA = timedelta(milliseconds=PERIOD_MS)
 
 # bucket size in time units
-BUCKET_TIMEDELTA = timedelta(seconds=1)
+BUCKET_TIMEDELTA = 1000  # ms
 
 
 class Bucket(BaseModel):
@@ -42,20 +41,16 @@ class Bucket(BaseModel):
     A bucket is the unit of fetching/caching data.
     '''
 
-    start: datetime
+    start: int
 
     @property
-    def end(self) -> datetime:
+    def end(self) -> int:
         return self.start + BUCKET_TIMEDELTA
 
     @validator("start")
-    def align_start(cls, dt: datetime) -> datetime:
+    def align_start(cls, start: int) -> int:
         '''Align bucket start date.'''
-        seconds_in_bucket = BUCKET_TIMEDELTA.total_seconds()
-        aligned_start_timestamp = dt.timestamp() // seconds_in_bucket * seconds_in_bucket
-        aligned_start = datetime.fromtimestamp(
-            aligned_start_timestamp, tz=dt.tzinfo)
-        return aligned_start
+        return start // BUCKET_TIMEDELTA * BUCKET_TIMEDELTA
 
     def next(self) -> "Bucket":
         '''Return the next bucket.'''
@@ -76,7 +71,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
     '''
     Generic cache fetcher.
 
-    Fetch and return the list of records between start_date (inclusive) and end_date (exclusive).
+    Fetch and return the list of records between start-date (inclusive) and end-date (exclusive).
 
     The fetcher uses cached records if available. 
 
@@ -122,10 +117,13 @@ class GenericFetcher(abc.ABC, Generic[T]):
             self.model_type = typing.get_args(parametrized_generic_fetcher)[0]
         return self.model_type
 
-    def fetch(self, start_date: datetime, end_date: datetime) -> List[T]:
+    def fetch(self, start_date_ms: int, end_date_ms: int) -> List[T]:
+
+        if end_date_ms < start_date_ms:
+            raise ValueError(f"end-date must be greater than start-date")
 
         # Initialize a list of buckets in range
-        buckets = self._init_buckets(start_date, end_date)
+        buckets = self._init_buckets(start_date_ms, end_date_ms)
 
         data_items: list[T] = []
         for bucket in buckets:
@@ -136,6 +134,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
             if cached_raw_value is not None:
 
                 # Cache Hit
+                print('lilo --- Cache Hit')
                 cached_items: list[T] = pydantic.parse_raw_as(
                     list[self.get_model_type()],
                     cached_raw_value  # type: ignore
@@ -150,7 +149,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
             # save the value to the cache only when whole block fetched
             # (partial blocks are not cached, thus will be fetched again when required)
             whole_bucket_fetched = len(
-                fetched_items) > 0 and fetched_items[-1].timestamp == (bucket.end - PERIOD_TIMEDELTA)
+                fetched_items) > 0 and fetched_items[-1].timestamp == (bucket.end - PERIOD_MS)
 
             # Cache items
             if whole_bucket_fetched:
@@ -168,26 +167,23 @@ class GenericFetcher(abc.ABC, Generic[T]):
 
         # return only items in range
         items_in_range = [
-            item for item in data_items if start_date <= item.timestamp < end_date
+            item for item in data_items if start_date_ms <= item.timestamp < end_date_ms
         ]
 
         return items_in_range
 
-    def _init_buckets(self, start_date: datetime, end_date: datetime) -> List[Bucket]:
+    def _init_buckets(self, start_date_ms: int, end_date_ms: int) -> List[Bucket]:
         '''
         return a list of buckets in a date range.
         '''
         buckets: list[Bucket] = []
 
-        if end_date < start_date:
-            raise ValueError(f"end_date must be greater than start_date")
-
-        bucket = Bucket(start=start_date)
+        bucket = Bucket(start=start_date_ms)
 
         while True:
             buckets.append(bucket)
             bucket = bucket.next()
-            if bucket.end >= end_date:
+            if bucket.end >= end_date_ms:
                 break
 
         return buckets
@@ -213,11 +209,11 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
     '''
     PowerBlock fetcher.
 
-    Fetch and return the list of PowerBlock records between start_date (inclusive) and end_date (exclusive).
+    Fetch and return the list of PowerBlock records between start-date (inclusive) and end-date (exclusive).
 
     Usage example:
         fetcher = PowerBlockFetcher(redis_client, redis_ttl_sec, es, es_index)
-        power_blocks = fetcher.fetch(start_date, end_date)
+        power_blocks = fetcher.fetch(start-date, end-date)
     '''
 
     def __init__(self, redis_client: redis.Redis, redis_ttl_sec: int, es: Elasticsearch, power_blocks_index: str):
@@ -231,7 +227,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
 
     def bucket_cache_key(self, bucket: Bucket) -> str:
         '''return the cache key by the bucket start date.'''
-        return f'power_blocks:{utils.datetime_to_ms_since_epoch(bucket.start)}'
+        return f'power_blocks:{bucket.start}'
 
     def get_cache_ttl(self, bucket: Bucket):
         # all buckets have the same ttl
@@ -243,8 +239,8 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         instances, and return them as a list.
         '''
 
-        start_date = bucket.start
-        end_date = bucket.end
+        start_date_ms = bucket.start
+        end_date_ms = bucket.end
 
         # timing
         if config.DEBUG_STREAMER:
@@ -254,26 +250,18 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         s = Search(using=self.es, index=self.power_blocks_index).filter(
             'range',
             timestamp={
-                'gte': utils.datetime_to_ms_since_epoch(start_date),
-                'lt': utils.datetime_to_ms_since_epoch(end_date),
+                'gte': start_date_ms,
+                'lt': end_date_ms,
             },
         ).sort('timestamp')
-
-        # Count search results
-        total = s.count()
-        print(f'lilo >>>>>>>>>>>>>>>>>>>> total: {total}')
-        s = s[0:total]
-        records = list(s.execute())
 
         # We use scan() instead of execute() to fetch all the records, and wrap it with a
         # list() to pull everything in memory. As long as we fetch data in buckets of
         # limited sizes, memory is not a problem.
-        # records = list(s.params(preserve_order=True).scan())
+        records = list(s.params(preserve_order=True).scan())
 
         blocks = [
             PowerBlock(
-                # lilo
-                # timestamp=utils.ms_since_epoch_to_datetime(record.timestamp),
                 timestamp=record.timestamp,
                 frequency=record.frequency,
                 power=record.power,
@@ -324,7 +312,10 @@ class Streamer:
         fetch events between (start_date, end_date)
         '''
 
-        power_blocks = self.fetcher.fetch(start_date, end_date)
+        start_date_ms = utils.datetime_to_ms_since_epoch(start_date)
+        end_date_ms = utils.datetime_to_ms_since_epoch(end_date)
+
+        power_blocks = self.fetcher.fetch(start_date_ms, end_date_ms)
 
         power_blocks_json = [
             json.dumps(power_block, default=pydantic_encoder)
@@ -333,10 +324,10 @@ class Streamer:
 
         self.sio.emit('power_blocks', data=power_blocks_json, to=self.sid)
 
-    def _upstream_has_data_after_date(self, dt: datetime):
+    def _upstream_has_data_after_date(self, date_ms: int):
         # get data item with timestamp greater than dt
         s = Search(using=self.es, index=config.ES_POWER_BLOCKS_INDEX).filter(
-            "range", timestamp={"gte": utils.datetime_to_ms_since_epoch(dt)},
+            "range", timestamp={"gte": date_ms},
         ).sort('timestamp')
 
         s = s[0:1]  # we only need one
@@ -359,7 +350,8 @@ class Streamer:
         self.streaming = True
 
         # fetch 1 sec
-        end_date = start_date + timedelta(seconds=1)
+        start_date_ms = utils.datetime_to_ms_since_epoch(start_date)
+        end_date_ms = start_date_ms + BUCKET_TIMEDELTA
 
         # start streaming
         while self.streaming:
@@ -367,19 +359,20 @@ class Streamer:
                 return  # stop streaming
 
             #  fetch items
-            power_blocks: PowerBlock = self.fetcher.fetch(start_date, end_date)
+            power_blocks: PowerBlock = self.fetcher.fetch(
+                start_date_ms, end_date_ms)
             if len(power_blocks) == 0:
                 # either no data at range or
                 # data not available yet in upstream
-                # (e.g: start_date/end_date in the future)
-                if not self._upstream_has_data_after_date(end_date):
+                # (e.g: start-date/end-date in the future)
+                if not self._upstream_has_data_after_date(end_date_ms):
                     # wait for data to be available in upstream
-                    time.sleep(0.1)
+                    time.sleep(PERIOD_MS/1000)
                     continue
 
                 # advance range (skip no data)
-                start_date = end_date
-                end_date = start_date + timedelta(seconds=1)
+                start_date_ms = end_date_ms
+                end_date_ms = start_date_ms + BUCKET_TIMEDELTA
                 continue
 
             # stream power_blocks
@@ -392,21 +385,17 @@ class Streamer:
                     power_block, default=pydantic_encoder)
 
                 self.sio.emit('power_blocks',
-                              data=power_block_json,
-                              to=self.sid)
+                              data=power_block_json, to=self.sid)
 
                 #  print timestamp of power_block
                 if config.DEBUG_STREAMER:
-                    ts = utils.datetime_to_ms_since_epoch(
-                        power_block.timestamp)
-                    print(f'emit {ts}')
+                    print(f'emit {power_block.timestamp}')
 
                 time.sleep(PERIOD_MS/1000)
 
             # advance range (skip no data)
-            start_date = power_blocks[-1].timestamp + \
-                timedelta(milliseconds=PERIOD_MS)
-            end_date = start_date + timedelta(seconds=1)
+            start_date_ms = power_blocks[-1].timestamp + PERIOD_MS
+            end_date_ms = start_date_ms + BUCKET_TIMEDELTA
 
     def pause(self):
         '''
