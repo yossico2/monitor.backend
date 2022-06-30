@@ -272,9 +272,11 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
 
         blocks = [
             PowerBlock(
-                timestamp=utils.ms_since_epoch_to_datetime(record.timestamp),
-                frequency=record["frequency"],
-                power=record["power"],
+                # lilo
+                # timestamp=utils.ms_since_epoch_to_datetime(record.timestamp),
+                timestamp=record.timestamp,
+                frequency=record.frequency,
+                power=record.power,
             )
             for record in records
         ]
