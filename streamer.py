@@ -2,7 +2,7 @@ import abc
 import time
 import json
 import typing
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Generic, Type, TypeVar, List
 
 from elasticsearch.client import Elasticsearch
