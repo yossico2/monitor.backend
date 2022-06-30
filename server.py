@@ -98,7 +98,6 @@ if __name__ == "__main__":
             sid=sid,
             start_date=start_date,
             end_date=end_date)
-        # input("press any key to exit\n")
 
     # TEST stream
     if True:
@@ -107,3 +106,5 @@ if __name__ == "__main__":
             sid=sid,
             start_date=datetime.now(tz=timezone.utc))
 
+
+    input("press any key\n")

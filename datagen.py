@@ -20,17 +20,10 @@ class PowerBlock_Document(Document):
 
     class Index:
         name = config.ES_POWER_BLOCKS_INDEX
-        settings = {
-            "number_of_shards": 2,
-        }
 
-    def save(self, ** kwargs):
-        self.power = len(self.body.split())
-        return super(PowerBlock_Document, self).save(** kwargs)
-
-
-def align_block_start(start_date: datetime) -> datetime:
-    return datetime.fromtimestamp(math.floor(10*start_date.timestamp())/10, tz=start_date.tzinfo)
+    # def save(self, ** kwargs):
+    #     self.power = len(self.body.split())
+    #     return super(PowerBlock_Document, self).save(** kwargs)
 
 
 class DataGenerator:
@@ -45,7 +38,8 @@ class DataGenerator:
         self.stop_flag = False
 
         # create the mappings in elasticsearch
-        PowerBlock_Document.init()
+        PowerBlock_Document.init(
+            using=self.connection, index=config.ES_POWER_BLOCKS_INDEX)
 
     def start(self, start_date: datetime):
 
@@ -58,6 +52,7 @@ class DataGenerator:
         if not self.stop_flag:
             self.stop_flag = True
             self.event_thread_stop.wait()
+            self.connection.close()
             if config.DEBUG_DATAGEN:
                 print(f'data generation stopped.')
 
@@ -73,22 +68,23 @@ class DataGenerator:
             ts = utils.datetime_to_ms_since_epoch(start_date)
             print(f'datagen (start_date: {ts})')
 
-        # start_date and timedelta
-        timestamp = utils.datetime_to_ms_since_epoch(
-            align_block_start(start_date))
+        # start_date (align to 100 ms start)
+        aligned_start_date = datetime.fromtimestamp(math.floor(
+            10*start_date.timestamp())/10, tz=start_date.tzinfo)
+        timestamp = utils.datetime_to_ms_since_epoch(aligned_start_date)
 
         # generate data
         while not self.stop_flag:
 
-            # bulk timing
+            # timing
             if config.DEBUG_DATAGEN:
                 timing_start = time.time()
 
             # collect PowerBlock_Document objects for bulk index
-            power_blocks = []
+            docs: list(PowerBlock_Document) = []
 
-            for i in range(10):  # bulk 10 objects every 1 sec.
-                power_blocks.append(
+            for _ in range(10):  # bulk 10 objects every 1 sec.
+                docs.append(
                     PowerBlock_Document(
                         timestamp=timestamp,
                         frequency=random.randrange(1e3, 40e9),
@@ -98,16 +94,17 @@ class DataGenerator:
                 timestamp += PERIOD_MS
 
             # bulk index
-            bulk(self.connection, (b.to_dict(True)
-                 for b in power_blocks), refresh='true')
+            # bulk(self.connection, (b.to_dict(include_meta=True)
+            #      for b in docs), refresh='true')
+            bulk(self.connection, (b.to_dict(include_meta=True) for b in docs))
 
-            # bulk timing
+            # timing
             if config.DEBUG_DATAGEN:
                 duration_ms = round(1000*(time.time() - timing_start))
-                print(f'es-bulk {len(power_blocks)} items ({duration_ms} ms)')
+                print(f'es-bulk {len(docs)} items ({duration_ms} ms)')
 
             # sleep 100ms
-            time.sleep(0.1)
+            time.sleep(PERIOD_MS/1000)
 
         self.event_thread_stop.set()  # signal stopped
 

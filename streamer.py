@@ -251,25 +251,32 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
             fetch_timing_start = time.time()
 
         # ElasticSearch query
-        search = Search(using=self.es, index=self.power_blocks_index).filter(
+        s = Search(using=self.es, index=self.power_blocks_index).filter(
             'range',
             timestamp={
-                "gte": utils.datetime_to_ms_since_epoch(start_date),
-                "lt": utils.datetime_to_ms_since_epoch(end_date),
+                'gte': utils.datetime_to_ms_since_epoch(start_date),
+                'lt': utils.datetime_to_ms_since_epoch(end_date),
             },
-        ).sort('timestamp').params(preserve_order=True)
+        ).sort('timestamp')
+
+        # Count search results
+        total = s.count()
+        print(f'lilo >>>>>>>>>>>>>>>>>>>> total: {total}')
+        s = s[0:total]
+        records = list(s.execute())
 
         # We use scan() instead of execute() to fetch all the records, and wrap it with a
         # list() to pull everything in memory. As long as we fetch data in buckets of
         # limited sizes, memory is not a problem.
-        result = list(search.scan())
+        # records = list(s.params(preserve_order=True).scan())
+
         blocks = [
             PowerBlock(
                 timestamp=utils.ms_since_epoch_to_datetime(record.timestamp),
                 frequency=record["frequency"],
                 power=record["power"],
             )
-            for record in result
+            for record in records
         ]
 
         # timing
