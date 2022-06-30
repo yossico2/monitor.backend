@@ -2,6 +2,7 @@ import abc
 import time
 import json
 import typing
+import threading
 from datetime import datetime
 from typing import Generic, Type, TypeVar, List
 
@@ -29,8 +30,6 @@ class TimestampModel(BaseModel):
     '''
     timestamp: int
 
-
-PERIOD_MS = 100  # 100 ms
 
 # bucket size in time units
 BUCKET_TIMEDELTA = 1000  # ms
@@ -134,7 +133,6 @@ class GenericFetcher(abc.ABC, Generic[T]):
             if cached_raw_value is not None:
 
                 # Cache Hit
-                print('lilo --- Cache Hit')
                 cached_items: list[T] = pydantic.parse_raw_as(
                     list[self.get_model_type()],
                     cached_raw_value  # type: ignore
@@ -149,7 +147,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
             # save the value to the cache only when whole block fetched
             # (partial blocks are not cached, thus will be fetched again when required)
             whole_bucket_fetched = len(
-                fetched_items) > 0 and fetched_items[-1].timestamp == (bucket.end - PERIOD_MS)
+                fetched_items) > 0 and fetched_items[-1].timestamp == (bucket.end - config.PERIOD_MS)
 
             # Cache items
             if whole_bucket_fetched:
@@ -253,7 +251,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
                 'gte': start_date_ms,
                 'lt': end_date_ms,
             },
-        ).sort('timestamp')
+        )  # .sort('timestamp')
 
         # We use scan() instead of execute() to fetch all the records, and wrap it with a
         # list() to pull everything in memory. As long as we fetch data in buckets of
@@ -293,6 +291,9 @@ class Streamer:
         self.sio = sio
 
         self.streaming = False
+        self.paused = False
+
+        self.streaming_lock = threading.Lock()
 
         # Redis (cache)
         redis_client = redis.Redis(config.REDIS_HOST)
@@ -345,18 +346,23 @@ class Streamer:
         '''
 
         # fail if already streaming
-        if self.streaming:
-            raise RuntimeError('already streaming!')
-        self.streaming = True
+        with self.streaming_lock:
+            if self.streaming:
+                raise RuntimeError('already streaming!')
+            self.streaming = True
 
         # fetch 1 sec
         start_date_ms = utils.datetime_to_ms_since_epoch(start_date)
         end_date_ms = start_date_ms + BUCKET_TIMEDELTA
 
         # start streaming
-        while self.streaming:
-            if not self.streaming:
-                return  # stop streaming
+        while True:
+            with self.streaming_lock:
+                if not self.streaming:
+                    return  # stop streaming
+            if self.paused:
+                time.sleep(config.PERIOD_MS/1000)
+                continue  # pause
 
             #  fetch items
             power_blocks: PowerBlock = self.fetcher.fetch(
@@ -367,7 +373,7 @@ class Streamer:
                 # (e.g: start-date/end-date in the future)
                 if not self._upstream_has_data_after_date(end_date_ms):
                     # wait for data to be available in upstream
-                    time.sleep(PERIOD_MS/1000)
+                    time.sleep(config.PERIOD_MS/1000)
                     continue
 
                 # advance range (skip no data)
@@ -378,8 +384,12 @@ class Streamer:
             # stream power_blocks
             for power_block in power_blocks:
 
-                if not self.streaming:
-                    return
+                with self.streaming_lock:
+                    if not self.streaming:
+                        return  # stop streaming
+                while self.paused:
+                    time.sleep(config.PERIOD_MS/1000)
+                    continue  # pause
 
                 power_block_json = json.dumps(
                     power_block, default=pydantic_encoder)
@@ -391,24 +401,38 @@ class Streamer:
                 if config.DEBUG_STREAMER:
                     print(f'emit {power_block.timestamp}')
 
-                time.sleep(PERIOD_MS/1000)
+                time.sleep(config.PERIOD_MS/1000)
 
             # advance range (skip no data)
-            start_date_ms = power_blocks[-1].timestamp + PERIOD_MS
+            start_date_ms = power_blocks[-1].timestamp + config.PERIOD_MS
             end_date_ms = start_date_ms + BUCKET_TIMEDELTA
 
     def pause(self):
         '''
         pause streamimg
         '''
-        # lilo:TODO
-        if not self.streaming:
-            return
+        with self.streaming_lock:
+            if not self.streaming:
+                return
+            self.paused = True
+        print(f'paused (sid:{self.sid})')
+
+    def play(self):
+        '''
+        play
+        '''
+        with self.streaming_lock:
+            if not self.streaming:
+                return
+            self.paused = False
+        print(f'play (sid:{self.sid})')
 
     def stop(self):
         '''
         stop streamimg
         '''
-        # lilo:TODO
-        if not self.streaming:
-            return
+        with self.streaming_lock:
+            if not self.streaming:
+                return
+            self.streaming = False
+        print(f'stopped (sid:{self.sid})')

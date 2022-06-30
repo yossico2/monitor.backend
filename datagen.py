@@ -1,3 +1,4 @@
+from sqlite3 import Timestamp
 import time
 import math
 import random
@@ -9,9 +10,6 @@ from elasticsearch.helpers import bulk
 
 import config
 import utils
-
-PERIOD_MS = 100  # 100 ms
-
 
 class PowerBlock_Document(Document):
 
@@ -85,14 +83,16 @@ class DataGenerator:
             docs: list(PowerBlock_Document) = []
 
             for _ in range(10):  # bulk 10 objects every 1 sec.
+
                 docs.append(
                     PowerBlock_Document(
+                        meta={'id': timestamp},
                         timestamp=timestamp,
                         frequency=random.randrange(1e3, 40e9),
                         power=random.randrange(10, 100)))
 
                 # advance time
-                timestamp += PERIOD_MS
+                timestamp += config.PERIOD_MS
 
             # bulk index
             # bulk(self.connection, (b.to_dict(include_meta=True)
@@ -105,7 +105,7 @@ class DataGenerator:
                 print(f'es-bulk {len(docs)} items ({duration_ms} ms)')
 
             # sleep 100ms
-            time.sleep(PERIOD_MS/1000)
+            time.sleep(config.PERIOD_MS/1000)
 
         self.event_thread_stop.set()  # signal stopped
 

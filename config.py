@@ -6,3 +6,5 @@ REDIS_HOST = 'localhost'
 REDIS_TTL_SEC = 3600  # 1 hour
 ES_HOST = 'localhost'
 ES_POWER_BLOCKS_INDEX = 'power_blocks'
+
+PERIOD_MS = 100  # 100 ms

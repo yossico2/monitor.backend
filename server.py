@@ -3,6 +3,7 @@ import signal
 import socketio
 import eventlet
 import threading
+from threading import Timer
 from datetime import datetime, timedelta, timezone
 from typing import Dict
 from streamer import Streamer
@@ -30,6 +31,7 @@ class MonitorServer:
         self.sio.on('fetch-events', self.on_fetch)
         self.sio.on('stream-events', self.on_stream)
         self.sio.on('pause-events', self.on_pause)
+        self.sio.on('play-events', self.on_play)
 
     def start(self):
         app = socketio.WSGIApp(self.sio)
@@ -69,6 +71,13 @@ class MonitorServer:
         client_streamer = self._clients.get(sid)
         client_streamer.pause()
 
+    def on_play(self, sid: str):
+        '''
+        play
+        '''
+        client_streamer = self._clients.get(sid)
+        client_streamer.play()
+
 
 if __name__ == "__main__":
 
@@ -99,12 +108,25 @@ if __name__ == "__main__":
             start_date=start_date,
             end_date=end_date)
 
+    # lilo:set timer (pause)
+    if True:
+        def pause(paused):
+            if paused:
+                server.on_pause(sid=sid)
+            else:
+                server.on_play(sid=sid)
+
+            t = Timer(interval=3 if paused else 5,
+                      function=pause, args=(not paused,))
+            t.start()  # pause after X seconds
+
+        pause(paused=False)
+
     # TEST stream
     if True:
         print('stream TEST:')
         server.on_stream(
             sid=sid,
             start_date=datetime.now(tz=timezone.utc))
-
 
     input("press any key\n")
