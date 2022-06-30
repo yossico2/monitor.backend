@@ -2,10 +2,11 @@ import time
 import math
 import random
 import threading
+from datetime import datetime, timezone
 from elasticsearch_dsl import Document, Date, Integer, Float
 from elasticsearch_dsl.connections import connections
-from datetime import datetime, timezone
 from elasticsearch.helpers import bulk
+
 import config
 import utils
 
