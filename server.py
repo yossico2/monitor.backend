@@ -40,12 +40,12 @@ class MonitorServer:
         eventlet.wsgi.server(eventlet.listen(('', config.SERVER_PORT)), app)
 
     def on_connect(self, sid: str, environ):
-        print(f'client connected (sid: {sid})')
+        print(f'>>> client connected (sid: {sid})')
         with self._clients_lock:
             self._clients[sid] = Streamer(sid=sid, sio=self.sio)
 
     def on_disconnect(self, sid: str):
-        print(f'client disconnected {sid}')
+        print(f'>>> client disconnected {sid}')
         with self._clients_lock:
             client_streamer = self._clients.get(sid)
             if client_streamer:
@@ -56,6 +56,7 @@ class MonitorServer:
         '''
         fetch events between (start_date, end_date)
         '''
+        print(f'>>> on_fetch (sid:{sid})')
         client_streamer = self._clients.get(sid)
         client_streamer.fetch(start_date, end_date)
 
@@ -63,6 +64,7 @@ class MonitorServer:
         '''
         start streamimg events from start_date
         '''
+        print(f'>>> on_stream (sid:{sid})')
         client_streamer = self._clients.get(sid)
         start_date = parser.parse(start_date_str)
         client_streamer.stream(start_date)
@@ -71,6 +73,7 @@ class MonitorServer:
         '''
         pause streamimg
         '''
+        print(f'>>> on_pause (sid:{sid})')
         client_streamer = self._clients.get(sid)
         client_streamer.pause()
 
@@ -78,6 +81,7 @@ class MonitorServer:
         '''
         play
         '''
+        print(f'>>> on_play (sid:{sid})')
         client_streamer = self._clients.get(sid)
         client_streamer.play()
 
@@ -85,6 +89,7 @@ class MonitorServer:
         '''
         stop
         '''
+        print(f'>>> on_stop (sid:{sid})')
         client_streamer = self._clients.get(sid)
         client_streamer.stop()
 

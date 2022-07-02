@@ -312,7 +312,6 @@ class Streamer:
         '''
         fetch events between (start_date, end_date)
         '''
-
         start_date_ms = utils.datetime_to_ms_since_epoch(start_date)
         end_date_ms = utils.datetime_to_ms_since_epoch(end_date)
 
@@ -344,7 +343,6 @@ class Streamer:
         '''
         start streamimg data points (PowerBlock objects) starting from start_date.
         '''
-
         # fail if already streaming
         with self.streaming_lock:
             if self.streaming:
@@ -415,7 +413,6 @@ class Streamer:
             if not self.streaming:
                 return
             self.paused = True
-        print(f'paused (sid:{self.sid})')
 
     def play(self):
         '''
@@ -425,7 +422,6 @@ class Streamer:
             if not self.streaming:
                 return
             self.paused = False
-        print(f'play (sid:{self.sid})')
 
     def stop(self):
         '''
@@ -435,4 +431,3 @@ class Streamer:
             if not self.streaming:
                 return
             self.streaming = False
-        print(f'stopped (sid:{self.sid})')
