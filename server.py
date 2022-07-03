@@ -3,6 +3,7 @@ import signal
 import socketio
 import eventlet
 import threading
+import random
 from threading import Timer
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
@@ -29,11 +30,12 @@ class MonitorServer:
         self.sio = socketio.Server(cors_allowed_origins='*')
         self.sio.on('connect', self.on_connect)
         self.sio.on('disconnect', self.on_disconnect)
-        self.sio.on('pb-fetch', self.on_fetch)
+        self.sio.on('pb-fetch-range', self.on_fetch_range)
         self.sio.on('pb-stream', self.on_stream)
         self.sio.on('pb-pause', self.on_pause)
         self.sio.on('pb-play', self.on_play)
         self.sio.on('pb-stop', self.on_stop)
+        self.sio.on('pb-fetch-power-data', self.on_fetch_power_block_data)
 
     def start(self):
         app = socketio.WSGIApp(self.sio)
@@ -52,11 +54,11 @@ class MonitorServer:
                 client_streamer.stop()
             self._clients[sid] = None
 
-    def on_fetch(self, sid: str, start_date: datetime, end_date: datetime):
+    def on_fetch_range(self, sid: str, start_date: datetime, end_date: datetime):
         '''
         fetch events between (start_date, end_date)
         '''
-        print(f'>>> on_fetch (sid:{sid})')
+        print(f'>>> on_fetch_range (sid:{sid})')
         client_streamer = self._clients.get(sid)
         client_streamer.fetch(start_date, end_date)
 
@@ -92,6 +94,25 @@ class MonitorServer:
         print(f'>>> on_stop (sid:{sid})')
         client_streamer = self._clients.get(sid)
         client_streamer.stop()
+
+    def on_fetch_power_block_data(self, sid: str, timestamp: datetime):
+        # lilo:TODO
+        print(
+            f'>>> on_fetch_power_block_data (sid: {sid}, timestamp: {timestamp})')
+        data = []
+        frequency = 2 * 1e9
+        numPoints = random.randint(0, 100)
+        maxStepSize = 500000 / numPoints
+        for i in range(numPoints):
+            frequency += (random.random() + 0.01) * maxStepSize
+            power = random.randint(0, 100)
+            data.append({
+                'index': i,
+                'frequency': frequency,
+                'power': power
+            })
+
+        self.sio.emit('pb-data', data=data, to=sid)
 
 
 def run_test_mode():
