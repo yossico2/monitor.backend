@@ -1,7 +1,8 @@
-python-socketio
-websocket-client
-eventlet
 elasticsearch
 elasticsearch-dsl
 pydantic
 redis
+eventlet
+uvicorn
+python-socketio
+# websocket-client

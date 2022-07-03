@@ -3,6 +3,7 @@ import time
 import json
 import typing
 import threading
+import eventlet
 from datetime import datetime
 from typing import Generic, Type, TypeVar, List
 
@@ -308,6 +309,11 @@ class Streamer:
             redis_ttl_sec=config.REDIS_TTL_SEC
         )
 
+    def _sleep(self, duration):
+        # lilo
+        # self.sio.sleep(duration)
+        eventlet.sleep(duration)
+
     def fetch(self, start_date: datetime, end_date: datetime):
         '''
         fetch events between (start_date, end_date)
@@ -324,7 +330,7 @@ class Streamer:
 
         self.sio.emit('power-blocks', data=power_blocks_json, to=self.sid)
 
-    def _upstream_has_data_after_date(self, date_ms: int):
+    def _upstream_data_after_date(self, date_ms: int):
         # get data item with timestamp greater than dt
         s = Search(using=self.es, index=config.ES_POWER_BLOCKS_INDEX).filter(
             "range", timestamp={"gte": date_ms},
@@ -333,6 +339,10 @@ class Streamer:
         s = s[0:1]  # we only need one
 
         result = list(s.execute())
+        return result
+
+    def _upstream_has_data_after_date(self, date_ms: int):
+        result = self._upstream_data_after_date(date_ms)
         if len(result) > 0:
             return True
 
@@ -348,6 +358,12 @@ class Streamer:
             if self.streaming:
                 raise RuntimeError('already streaming!')
             self.streaming = True
+        self.sio.start_background_task(self.stream_background_task, start_date)
+
+    def stream_background_task(self, start_date: datetime):
+
+        print(
+            f'---------------->>> stream_background_task (start_date:{start_date})')
 
         # fetch 1 sec
         start_date_ms = utils.datetime_to_ms_since_epoch(start_date)
@@ -358,24 +374,27 @@ class Streamer:
             with self.streaming_lock:
                 if not self.streaming:
                     return  # stop streaming
+
             if self.paused:
-                self.sio.sleep(config.PERIOD_MS/1000)
+                print(f'--->>> paused')
+                self._sleep(config.PERIOD_MS/1000)
                 continue  # pause
 
             #  fetch items
             power_blocks: PowerBlock = self.fetcher.fetch(
                 start_date_ms, end_date_ms)
             if len(power_blocks) == 0:
-                # either no data at range or
-                # data not available yet in upstream
+                # either no data in range or data not available yet in upstream
                 # (e.g: start-date/end-date in the future)
-                if not self._upstream_has_data_after_date(end_date_ms):
-                    # wait for data to be available in upstream
-                    self.sio.sleep(config.PERIOD_MS/1000)
+                result = self._upstream_data_after_date(end_date_ms)
+                if len(result) == 0:
+                    # no data >= end_date_ms available in upstream
+                    self._sleep(config.PERIOD_MS/1000)
                     continue
 
-                # advance range (skip no data)
-                start_date_ms = end_date_ms
+                # advance range (skip data gap)
+                # continue from where we have data
+                start_date_ms = result[0].timestamp
                 end_date_ms = start_date_ms + BUCKET_TIMEDELTA
                 continue
 
@@ -385,8 +404,9 @@ class Streamer:
                 with self.streaming_lock:
                     if not self.streaming:
                         return  # stop streaming
+
                 while self.paused:
-                    self.sio.sleep(config.PERIOD_MS/1000)
+                    self._sleep(config.PERIOD_MS/1000)
                     continue  # pause
 
                 power_block_json = json.dumps(
@@ -399,7 +419,7 @@ class Streamer:
                 if config.DEBUG_STREAMER:
                     print(f'emit {power_block.timestamp}')
 
-                self.sio.sleep(config.PERIOD_MS/1000)
+                self._sleep(config.PERIOD_MS/1000)
 
             # advance range (skip no data)
             start_date_ms = power_blocks[-1].timestamp + config.PERIOD_MS
@@ -410,24 +430,21 @@ class Streamer:
         pause streamimg
         '''
         with self.streaming_lock:
-            if not self.streaming:
-                return
-            self.paused = True
+            if self.streaming:
+                self.paused = True
 
     def play(self):
         '''
         play
         '''
         with self.streaming_lock:
-            if not self.streaming:
-                return
-            self.paused = False
+            if self.streaming:
+                self.paused = False
 
     def stop(self):
         '''
         stop streamimg
         '''
         with self.streaming_lock:
-            if not self.streaming:
-                return
-            self.streaming = False
+            if self.streaming:
+                self.streaming = False
