@@ -362,9 +362,6 @@ class Streamer:
 
     def stream_background_task(self, start_date: datetime):
 
-        print(
-            f'---------------->>> stream_background_task (start_date:{start_date})')
-
         # fetch 1 sec
         start_date_ms = utils.datetime_to_ms_since_epoch(start_date)
         end_date_ms = start_date_ms + BUCKET_TIMEDELTA
