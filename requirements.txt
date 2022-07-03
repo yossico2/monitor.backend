@@ -3,6 +3,4 @@ elasticsearch-dsl
 pydantic
 redis
 eventlet
-uvicorn
 python-socketio
-# websocket-client

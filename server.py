@@ -1,6 +1,7 @@
 import sys
 import signal
 import socketio
+import eventlet
 import threading
 import random
 from threading import Timer
@@ -20,26 +21,13 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 
-SERVER_MODE = 'eventlet'
-# SERVER_MODE = 'uvicorn'
-
-if SERVER_MODE == 'uvicorn':
-    import uvicorn
-else:  # default
-    import eventlet
-
-
 class MonitorServer:
 
     def __init__(self):
         self._clients: Dict[str, Streamer] = dict()
         self._clients_lock = threading.Lock()
 
-        if SERVER_MODE == 'uvicorn':
-            self.sio = socketio.AsyncServer(
-                async_mode='asgi', cors_allowed_origins='*')
-        else:  # default to 'eventlet'
-            self.sio = socketio.Server(cors_allowed_origins='*')
+        self.sio = socketio.Server(cors_allowed_origins='*')
 
         self.sio.on('connect', self.on_connect)
         self.sio.on('disconnect', self.on_disconnect)
@@ -51,13 +39,8 @@ class MonitorServer:
         self.sio.on('pb-fetch-power-data', self.on_fetch_power_block_data)
 
     def start(self):
-        if SERVER_MODE == 'uvicorn':
-            app = socketio.ASGIApp(self.sio)
-            uvicorn.run(app, host='127.0.0.1', port=config.SERVER_PORT)
-        else:  # default to 'eventlet'
-            app = socketio.WSGIApp(self.sio)
-            eventlet.wsgi.server(eventlet.listen(
-                ('', config.SERVER_PORT)), app)
+        app = socketio.WSGIApp(self.sio)
+        eventlet.wsgi.server(eventlet.listen(('', config.SERVER_PORT)), app)
 
     def on_connect(self, sid: str, environ):
         print(f'>>> client connected (sid: {sid})')
