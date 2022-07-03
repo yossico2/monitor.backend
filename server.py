@@ -59,8 +59,6 @@ class MonitorServer:
             eventlet.wsgi.server(eventlet.listen(
                 ('', config.SERVER_PORT)), app)
 
-        # uvicorn
-
     def on_connect(self, sid: str, environ):
         print(f'>>> client connected (sid: {sid})')
         with self._clients_lock:
