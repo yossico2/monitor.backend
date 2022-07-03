@@ -1,4 +1,3 @@
-from sqlite3 import Timestamp
 import time
 import math
 import random
@@ -61,7 +60,7 @@ class DataGenerator:
         bulk save to es every 1 sec.
         '''
 
-        self.event_thread_start.set()  # signal started
+        self.event_thread_start.set()  # signal thread started
 
         if config.DEBUG_DATAGEN:
             ts = utils.datetime_to_ms_since_epoch(start_date)
@@ -107,7 +106,7 @@ class DataGenerator:
             # sleep 100ms
             time.sleep(config.PERIOD_MS/1000)
 
-        self.event_thread_stop.set()  # signal stopped
+        self.event_thread_stop.set()  # signal thread stopped
 
 
 if __name__ == "__main__":
