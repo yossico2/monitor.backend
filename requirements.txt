@@ -4,3 +4,5 @@ pydantic
 redis
 eventlet
 python-socketio
+websocket-client
+requests # for sio client

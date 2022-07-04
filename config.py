@@ -10,4 +10,5 @@ ES_HOST = 'localhost'
 ES_POWER_BLOCKS_INDEX = 'power_blocks'
 SQL_HOST = 'localhost'
 
-PERIOD_MS = 100  # 100 ms
+# PERIOD_MS = 100  # 100 ms
+PERIOD_MS = 1000

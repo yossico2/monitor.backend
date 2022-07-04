@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from typing import Dict
 from streamer import Streamer
+from stategen import StateUpdater
 
 import config
 
@@ -29,8 +30,11 @@ class MonitorServer:
 
         self.sio = socketio.Server(cors_allowed_origins='*')
 
+        self.state_updater = StateUpdater()
+
         self.sio.on('connect', self.on_connect)
         self.sio.on('disconnect', self.on_disconnect)
+        self.sio.on('datagen-events', self.state_updater.on_datagen_events)
         self.sio.on('pb-fetch-range', self.on_fetch_range)
         self.sio.on('pb-stream', self.on_stream)
         self.sio.on('pb-pause', self.on_pause)
@@ -39,6 +43,7 @@ class MonitorServer:
         self.sio.on('pb-fetch-power-data', self.on_fetch_power_block_data)
 
     def start(self):
+        print('starting monitor backend server ... ')
         app = socketio.WSGIApp(self.sio)
         eventlet.wsgi.server(eventlet.listen(('', config.SERVER_PORT)), app)
 
@@ -115,8 +120,7 @@ class MonitorServer:
         self.sio.emit('pb-data', data=data, to=sid)
 
 
-def run_test_mode():
-    server = MonitorServer()
+def run_test_mode(server):
     sid = 'lilo'
     server.on_connect(sid=sid, environ={})
 
@@ -156,18 +160,14 @@ def run_test_mode():
 
 if __name__ == "__main__":
 
-    # simulate data into es
-    import time
+    # simulate data
     from datagen import DataGenerator
     data_generator = DataGenerator(es_host=config.ES_HOST)
-    data_generator.start(start_date=datetime.now(tz=timezone.utc))
-    # time.sleep(1)
-    # data_generator.stop()
+    data_generator.start()
 
+    # start monitor server
+    server = MonitorServer()
     if config.TEST_MODE:
-        run_test_mode()
+        run_test_mode(server)
     else:
-        # start monitor server
-        server = MonitorServer()
-        print('starting monitor backend server ... ')
         server.start()

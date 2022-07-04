@@ -310,8 +310,6 @@ class Streamer:
         )
 
     def _sleep(self, duration):
-        # lilo
-        # self.sio.sleep(duration)
         eventlet.sleep(duration)
 
     def fetch(self, start_date: datetime, end_date: datetime):
