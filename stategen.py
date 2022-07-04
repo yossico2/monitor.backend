@@ -8,6 +8,10 @@ SEC = 1000  # ms
 MINUTE = 60 * SEC
 PERIOD = 100  # ms
 
+stateInit = 0
+stateRequest = 1
+stateResponse = 2
+stateResolved = 3
 
 class StateUpdater:
     def __init__(self):
@@ -17,4 +21,7 @@ class StateUpdater:
 
     def on_datagen_events(self, sid:str, events):
         # lilo:TODO
-        print(f'on_datagen_events: ({len(events)} events)')
+        for e in events:
+            e['state'] = stateInit
+            self.ring.push(e)
+        print(f'on_datagen_events: ({self.ring.count()} events)')
