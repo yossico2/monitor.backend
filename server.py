@@ -13,9 +13,11 @@ from state_updater import StateUpdater
 
 import config
 
+global server
 
 def signal_handler(sig, frame):
     print('user exit.')
+    # server.stop()
     sys.exit(0)
 
 
@@ -44,8 +46,13 @@ class MonitorServer:
 
     def start(self):
         print('starting monitor backend server ... ')
+        self.state_updater.start()
         app = socketio.WSGIApp(self.sio)
         eventlet.wsgi.server(eventlet.listen(('', config.SERVER_PORT)), app)
+    
+    def stop(self):
+        if self.state_updater:
+            self.state_updater.stop()
 
     def on_connect(self, sid: str, environ):
         print(f'>>> client connected (sid: {sid})')
