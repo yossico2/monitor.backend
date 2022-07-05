@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from typing import Dict
 from streamer import Streamer
-from stategen import StateUpdater
+from state_updater import StateUpdater
 
 import config
 
