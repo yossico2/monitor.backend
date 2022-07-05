@@ -13,11 +13,8 @@ from state_updater import StateUpdater
 
 import config
 
-global server
-
 def signal_handler(sig, frame):
     print('user exit.')
-    # server.stop()
     sys.exit(0)
 
 
