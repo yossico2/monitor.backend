@@ -351,7 +351,6 @@ class Streamer:
                     return  # stop streaming
 
             if self.paused:
-                print(f'--->>> paused')
                 self._sleep(config.PERIOD_MS/1000)
                 continue  # pause
 
@@ -392,7 +391,7 @@ class Streamer:
 
                 #  print timestamp of power_block
                 if config.DEBUG_STREAMER:
-                    print(f'emit {power_block.timestamp}')
+                    print(f'emit power-block (timestamp: {power_block.timestamp})')
 
                 self._sleep(config.PERIOD_MS/1000)
 

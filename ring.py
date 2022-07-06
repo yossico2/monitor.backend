@@ -39,7 +39,7 @@ class Ring:
             self.map[item[self.key]] = item
         if self._count == self._size:
             if self.key:
-                self.map.pop(self._list[self.start][self.key], None)
+                self.map.pop(self._list[self._start][self.key], None)
             self._start = (self._start + 1) % self._size  # full, overwrite
         else:
             self._count += 1

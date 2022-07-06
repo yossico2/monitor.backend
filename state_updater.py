@@ -46,7 +46,6 @@ class StateUpdater:
         print(f'on_datagen_events: ({self.ring.count()} events)')
 
     def update_events_state(self):
-        print(f'update_events_state')
         events = self.ring.toArray()
         updated = []
         for e in events:
@@ -60,7 +59,11 @@ class StateUpdater:
         # lilo:TODO
 
         # emit to clients
-        self.sio.emit('pb-events-state', data=updated)
+        # lilo:TODO
+        # if len(updated) > 0:
+            # self.sio.emit('pb-events-state', data=updated)
+            # print('update_events_state')
+            # self.sio.emit('foo', data='hello', broadcast=True, include_self=False)
 
     def update_event_state(self, e):
 
