@@ -36,7 +36,7 @@ class Ring:
         end = (self._start + self._count) % self._size
         self._list[end] = item
         if self.key:
-            self.key.set(item[self.key], item)
+            self.map[item[self.key]] = item
         if self._count == self._size:
             if self.key:
                 self.map.pop(self._list[self.start][self.key], None)
@@ -57,12 +57,17 @@ class Ring:
 
         return item
 
-    def foreach(self, cb):
-        for item in self._list:
-            cb(item)
+    def forEach(self, cb):
+        i = self._start
+        count = self._count
+        while count > 0:
+            cb(self._list[i])
+            i = (i + 1) % self._size
+            count -= 1
+            
 
     def toArray(self):
         arr = []
-        for item in self._list:
-            arr.append(item)
+        i = 0
+        self.forEach(lambda item: arr.append(item))
         return arr

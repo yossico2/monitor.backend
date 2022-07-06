@@ -1,4 +1,5 @@
 import random
+import socketio
 from datetime import datetime, timezone
 from threading import Timer
 
@@ -24,7 +25,8 @@ class RepeatTimer(Timer):
 
 
 class StateUpdater:
-    def __init__(self):
+    def __init__(self, sio:socketio.Server):
+        self.sio = sio
         ring_size = 5 * MINUTE / PERIOD
         self.ring = Ring(ring_size, key='timestamp')
 
@@ -79,7 +81,7 @@ class StateUpdater:
             return True
 
         if state == stateRequest:
-            if now - timestamp.getTime() > 7000:
+            if now - timestamp > 7000:
                 return False  # unmodified
             if random.random() < 0.2:
                 return False  # unmodified (failed to get response)
@@ -87,7 +89,7 @@ class StateUpdater:
             return True
 
         if state == stateResponse:
-            if now - timestamp.getTime() > 7000:
+            if now - timestamp > 7000:
                 return False  # unmodified
             if random.random() < 0.95:
                 return False  # unmodified (not resolved)

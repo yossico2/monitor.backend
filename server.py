@@ -29,7 +29,7 @@ class MonitorServer:
 
         self.sio = socketio.Server(cors_allowed_origins='*')
 
-        self.state_updater = StateUpdater()
+        self.state_updater = StateUpdater(self.sio)
 
         self.sio.on('connect', self.on_connect)
         self.sio.on('disconnect', self.on_disconnect)

@@ -19,7 +19,7 @@ import socketio
 
 import config
 import utils
-from model import TimestampModel
+from model import TimestampModel, PowerBlock
 
 import logging
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
         if end_date_ms < start_date_ms:
             raise ValueError(f"end-date must be greater than start-date")
 
-        # Initialize a list of buckets in range
+        # initialize a list of buckets in range
         buckets = self._init_buckets(start_date_ms, end_date_ms)
 
         data_items: list[T] = []
@@ -183,19 +183,6 @@ class GenericFetcher(abc.ABC, Generic[T]):
 # ----------------------------------------------------------------------------------
 # PowerBlock Fetcher
 # ----------------------------------------------------------------------------------
-
-
-class PowerBlock(TimestampModel):
-    '''
-    Model to keep track of an individual PowerBlock.
-    '''
-
-    frequency: float
-    power: int
-
-    class Config:
-        frozen = True
-
 
 class PowerBlockFetcher(GenericFetcher[PowerBlock]):
     '''

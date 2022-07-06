@@ -62,9 +62,8 @@ class RedisCache(Generic[T]):
         '''Align timestamp to bucket start.'''
         return timestamp // BUCKET_TIMEDELTA * BUCKET_TIMEDELTA
 
-    def get_bucket(self, dt: datetime):
+    def get_item(self, timestamp:int) -> T:
         # check if cache contains bucket
-        timestamp = utils.datetime_to_ms_since_epoch(dt)
         bucket_start = self.align_bucket_start(timestamp)
         bucket_cache_key = self.bucket_cache_key(bucket_start)
         cached_raw_value = self.redis_client.get(bucket_cache_key)
@@ -74,4 +73,39 @@ class RedisCache(Generic[T]):
                 list[self.get_model_type()],
                 cached_raw_value  # type: ignore
             )
-        return cached_raw_value
+        
+        for item in cached_items:
+            if item.timestamp == timestamp:
+                return item
+        return None
+    
+    def get_items(self, start_timestamp: int, end_timestamp: int) -> List[T]:
+        if end_timestamp < start_timestamp:
+            raise ValueError(f"end-timestamp must be greater than start-timestamp")
+
+        # initialize a list of buckets in range
+        buckets = self._init_buckets(start_timestamp, end_timestamp)
+
+        data_items: list[T] = []
+        for bucket in buckets:
+
+            # check if cache contains bucket
+            cache_key = self.bucket_cache_key(bucket.start)
+            cached_raw_value = self.get_redis_client().get(cache_key)
+            if cached_raw_value is not None:
+
+                # cache hit
+                cached_items: list[T] = pydantic.parse_raw_as(
+                    list[self.get_model_type()],
+                    cached_raw_value  # type: ignore
+                )
+
+                data_items += cached_items
+                continue
+
+        # return only items in range
+        items_in_range = [
+            item for item in data_items if start_timestamp <= item.timestamp < end_timestamp
+        ]
+
+        return items_in_range
