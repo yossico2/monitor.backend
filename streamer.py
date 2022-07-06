@@ -19,18 +19,11 @@ import socketio
 
 import config
 import utils
+from model import TimestampModel
 
 import logging
 logger = logging.getLogger(__name__)
 #lilo: logging.basicConfig(level=logging.DEBUG)
-
-
-class TimestampModel(BaseModel):
-    '''
-    Base model for any records having timestamps.
-    '''
-    timestamp: int
-
 
 # bucket size in time units
 BUCKET_TIMEDELTA = 1000  # ms
