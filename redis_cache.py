@@ -116,7 +116,7 @@ class RedisCache(Generic[T]):
         for updated_item in items:
             cached_item = cached_items_by_timestamp.get(
                 updated_item['timestamp'])
-            if cached_item:
+            if cached_item: # lilox (always None)
                 cached_item.state = updated_item.state
 
         # put items back in cache
