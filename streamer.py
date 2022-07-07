@@ -48,6 +48,9 @@ class GenericFetcher(abc.ABC, Generic[T]):
     def get_values_from_upstream(self, bucket: Bucket) -> List[T]:
         raise NotImplementedError()
 
+    def _is_bucket_full(self, bucket:Bucket, fetched_items: List[T]):
+        return len(fetched_items) > 0 and fetched_items[-1].timestamp == (bucket.end - config.PERIOD_MS)
+
     def fetch(self, start_date_ms: int, end_date_ms: int) -> List[T]:
 
         if end_date_ms < start_date_ms:
@@ -60,9 +63,12 @@ class GenericFetcher(abc.ABC, Generic[T]):
         redis_cache = self.get_redis_cache()
         for bucket in buckets:
 
-            # Check if cache contains bucket
+            # check if cache contains bucket
             cached_items: list[T] = redis_cache.get_bucket(bucket)
-            if len(cached_items) > 0:
+
+            # skip get from upstream only when a whole bucket cached
+            # (partial cached buckets will be fetched again when required)
+            if self._is_bucket_full(bucket, cached_items):
                 # cache hit
                 data_items += cached_items
                 continue
@@ -71,12 +77,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
             fetched_items = self.get_values_from_upstream(bucket)
 
             # cache items
-            # save the value to the cache only when whole block fetched
-            # (partial blocks are not cached, thus will be fetched again when required)
-            whole_bucket_fetched = len(
-                fetched_items) > 0 and fetched_items[-1].timestamp == (bucket.end - config.PERIOD_MS)
-            if whole_bucket_fetched:
-                redis_cache.cache_items(fetched_items)
+            redis_cache.set_items(fetched_items)
 
             data_items += fetched_items
 
@@ -115,14 +116,13 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
     Fetch and return the list of PowerBlock records between start-date (inclusive) and end-date (exclusive).
 
     Usage example:
-        fetcher = PowerBlockFetcher(redis_client, redis_ttl_sec, es, es_index)
+        fetcher = PowerBlockFetcher(redis_cache, es, es_index)
         power_blocks = fetcher.fetch(start-date, end-date)
     '''
 
-    def __init__(self, redis_client: redis.Redis, redis_ttl_sec: int, es: Elasticsearch, power_blocks_index: str):
+    def __init__(self, redis_cache: RedisCache, es: Elasticsearch, power_blocks_index: str):
         self.es = es
-        self.redis_cache = RedisCache(
-            redis_client=redis_client, redis_ttl_sec=redis_ttl_sec)
+        self.redis_cache = redis_cache
         self.power_blocks_index = power_blocks_index
 
     def get_redis_cache(self) -> RedisCache:
@@ -131,7 +131,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
     def get_values_from_upstream(self, bucket: Bucket) -> List[PowerBlock]:
         '''
         Pull from ElasticSearch data items in bucket range, convert them to model 
-        instances, and return them as a list.
+        instances, and return them as a sorted list by PowerBlock.timestamp.
         '''
 
         start_date_ms = bucket.start
@@ -181,7 +181,7 @@ class Streamer:
         self,
         sid: str,
         sio: socketio.Server,
-        redis_client: redis.Redis
+        redis_cache: RedisCache
     ) -> None:
 
         # SocketIO
@@ -197,10 +197,9 @@ class Streamer:
         self.es = Elasticsearch(hosts=[config.ES_HOST])
 
         self.fetcher = PowerBlockFetcher(
-            redis_client=redis_client,
+            redis_cache=redis_cache,
             es=self.es,
-            power_blocks_index=config.ES_POWER_BLOCKS_INDEX,
-            redis_ttl_sec=config.REDIS_TTL_SEC
+            power_blocks_index=config.ES_POWER_BLOCKS_INDEX
         )
 
     def _sleep(self, duration):

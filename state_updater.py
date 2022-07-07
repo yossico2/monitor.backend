@@ -1,12 +1,11 @@
 import random
-import redis
 import socketio
 from datetime import datetime, timezone
-from threading import Timer
 
 import config
 import utils
 from ring import Ring
+from redis_cache import RedisCache
 
 # constants
 # -------------------
@@ -21,9 +20,9 @@ stateResolved = 3
 
 
 class StateUpdater:
-    def __init__(self, sio: socketio.Server, redis_client: redis.Redis):
+    def __init__(self, sio: socketio.Server, redis_cache: RedisCache):
         self.sio = sio
-        self.redis_client = redis_client
+        self.redis_cache = redis_cache
         ring_size = 5 * MINUTE / PERIOD
         self.ring = Ring(ring_size, key='timestamp')
         self.thread = None
@@ -50,20 +49,21 @@ class StateUpdater:
                 break
 
             events = self.ring.toArray()
-            updated = []
-            for e in events:
-                if self.update_event_state(e):
-                    updated.append(e)
+            if len(events) > 0:
+                updated = []
+                for e in events:
+                    if self.update_event_state(e):
+                        updated.append(e)
+                if len(updated) > 0:
+                    # lilo:TODO
+                    # update cache
+                    self.redis_cache.update_items(updated)
 
-            # update cache
-            # lilo:TODO
+                    # update db
+                    # lilo:TODO
 
-            # update db
-            # lilo:TODO
-
-            # emit to clients
-            if len(updated) > 0:
-                self.sio.emit('pb-events-state', data=updated)
+                    # emit to clients
+                    self.sio.emit('pb-events-state', data=updated)
 
             self.sio.sleep(SEC/PERIOD)
 

@@ -9,10 +9,11 @@ from threading import Timer
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from typing import Dict
-from streamer import Streamer
-from state_updater import StateUpdater
 
 import config
+from streamer import Streamer
+from redis_cache import RedisCache
+from state_updater import StateUpdater
 
 import logging
 logger = logging.getLogger(__name__)
@@ -35,10 +36,12 @@ class MonitorServer:
 
         self.sio = socketio.Server(cors_allowed_origins='*')
 
-        self.redis_client = redis.Redis(config.REDIS_HOST)
+        self.redis_cache = RedisCache(
+            redis_client=redis.Redis(config.REDIS_HOST), 
+            redis_ttl_sec=config.REDIS_TTL_SEC)
 
         self.state_updater = StateUpdater(
-            sio=self.sio, redis_client=self.redis_client)
+            sio=self.sio, redis_cache=self.redis_cache)
 
         self.sio.on('connect', self.on_connect)
         self.sio.on('disconnect', self.on_disconnect)
@@ -52,7 +55,8 @@ class MonitorServer:
 
     def start(self):
         print('starting monitor backend server ... ')
-        self.state_updater.start()
+        # lilox
+        # self.state_updater.start()
         app = socketio.WSGIApp(self.sio)
         eventlet.wsgi.server(eventlet.listen(('', config.SERVER_PORT)), app)
 
@@ -64,7 +68,9 @@ class MonitorServer:
         print(f'>>> client connected (sid: {sid})')
         with self._clients_lock:
             self._clients[sid] = Streamer(
-                sid=sid, sio=self.sio, redis_client=self.redis_client)
+                sid=sid, 
+                sio=self.sio, 
+                redis_cache=self.redis_cache)
 
     def on_disconnect(self, sid: str):
         print(f'>>> client disconnected {sid}')

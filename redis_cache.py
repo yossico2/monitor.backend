@@ -98,7 +98,37 @@ class RedisCache(Generic[T]):
 
         return cached_items
 
-    def cache_items(self, items: List[T]):
+    def update_items(self, items: List[T]):
+
+        # sort items by timestamp
+        items = sorted(items, key=lambda d: d['timestamp'])
+
+        # collect buckets containing items to update
+        cached_items = self.get_items_in_range(
+            start_timestamp=items[0]['timestamp'],
+            end_timestamp=items[-1]['timestamp'] + BUCKET_TIMEDELTA)
+
+        # create lookup map
+        cached_items_by_timestamp = {
+            cached_item['timestamp']: cached_item for cached_item in cached_items}
+
+        # update items
+        for updated_item in items:
+            cached_item = cached_items_by_timestamp.get(
+                updated_item['timestamp'])
+            if cached_item:
+                cached_item.state = updated_item.state
+
+        # put items back in cache
+        self.set_items(items)
+
+    def set_items(self, items: List[T]):
+
+        if not items or len(items) == 0:
+            return
+
+        # sort items by timestamp
+        items = sorted(items, key=lambda x: x.timestamp)
 
         buckets = self._init_buckets(items[0].timestamp, items[-1].timestamp)
 
