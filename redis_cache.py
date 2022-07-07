@@ -1,10 +1,12 @@
+import json
 import redis
 import typing
 import pydantic
 from pydantic import BaseModel, validator
+from pydantic.json import pydantic_encoder
 from typing import Generic, Type, List
 
-from model import T, pydantic_to_json
+from model import T
 
 # bucket size in time units
 BUCKET_TIMEDELTA = 1000  # ms
@@ -101,22 +103,22 @@ class RedisCache(Generic[T]):
     def update_items(self, items: List[T]):
 
         # sort items by timestamp
-        items = sorted(items, key=lambda d: d['timestamp'])
+        items = sorted(items, key=lambda d: d.timestamp)
 
         # collect buckets containing items to update
         cached_items = self.get_items_in_range(
-            start_timestamp=items[0]['timestamp'],
-            end_timestamp=items[-1]['timestamp'] + BUCKET_TIMEDELTA)
+            start_timestamp=items[0].timestamp,
+            end_timestamp=items[-1].timestamp + BUCKET_TIMEDELTA)
 
         # create lookup map
         cached_items_by_timestamp = {
-            cached_item['timestamp']: cached_item for cached_item in cached_items}
+            cached_item.timestamp: cached_item for cached_item in cached_items}
 
         # update items
         for updated_item in items:
             cached_item = cached_items_by_timestamp.get(
-                updated_item['timestamp'])
-            if cached_item: # lilox (always None)
+                updated_item.timestamp)
+            if cached_item:
                 cached_item.state = updated_item.state
 
         # put items back in cache
@@ -124,7 +126,8 @@ class RedisCache(Generic[T]):
 
     def set_items(self, items: List[T]):
 
-        if not items or len(items) == 0:
+        items_length = len(items)
+        if items_length == 0:
             return
 
         # sort items by timestamp
@@ -132,18 +135,23 @@ class RedisCache(Generic[T]):
 
         buckets = self._init_buckets(items[0].timestamp, items[-1].timestamp)
 
-        bucket = buckets[0]
+        item_index = 0
         bucket_items = []
-        bucket_cache_key = self._bucket_cache_key(bucket.start)
-        for item in items:
+
+        for bucket in buckets:
+
             # collect bucket items
-            if item.timestamp < bucket.end:
+            while item_index < items_length:
+                item = items[item_index]
+                item_index += 1
+                if item.timestamp >= bucket.end:
+                    break
                 bucket_items.append(item)
-                continue
 
             # cache bucket items
-            json_items = pydantic_to_json(items)
+            json_items = json.dumps(bucket_items, default=pydantic_encoder)
 
+            bucket_cache_key = self._bucket_cache_key(bucket.start)
             self.redis_client.set(
                 bucket_cache_key,
                 json_items,
@@ -151,8 +159,6 @@ class RedisCache(Generic[T]):
 
             # prepare for next bucket
             bucket_items = []
-            bucket = bucket.next()
-            bucket_cache_key = self._bucket_cache_key(bucket.start)
 
     def _init_buckets(self, start_timestamp: int, end_timestamp: int) -> List[Bucket]:
         '''

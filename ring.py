@@ -1,3 +1,6 @@
+from typing import Dict
+
+
 class Ring:
     def __init__(self, size, key=None):
         if size <= 0:
@@ -32,11 +35,11 @@ class Ring:
             return self.map.get(key)
         return None
 
-    def push(self, item):
+    def push(self, item:Dict):
         end = (self._start + self._count) % self._size
         self._list[end] = item
         if self.key:
-            self.map[item[self.key]] = item
+            self.map[getattr(item, self.key)] = item
         if self._count == self._size:
             if self.key:
                 self.map.pop(self._list[self._start][self.key], None)
@@ -50,7 +53,7 @@ class Ring:
 
         item = self._list[self._start]
         if self.key:
-            self.map.pop(item[self.key], None)
+            self.map.pop(getattr(item, self.key), None)
         self._list[self._start] = None
         self._start = (self._start + 1) % self._size
         self._count -= 1

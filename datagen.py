@@ -3,6 +3,7 @@ import math
 import random
 import threading
 import socketio
+import json
 from datetime import datetime, timezone
 from elasticsearch_dsl import Document, Date, Integer, Float
 from elasticsearch_dsl.connections import connections
@@ -114,11 +115,12 @@ class DataGenerator:
                 # advance time
                 timestamp += config.PERIOD_MS
 
-            # bulk index
+            # bulk index to es
             bulk(self.connection, (b.to_dict(include_meta=True) for b in docs))
 
             # emit events to sio
-            docs_json = [d.to_dict() for d in docs]
+            docs_dict = [d.to_dict() for d in docs]
+            docs_json = json.dumps(docs_dict)
             self.sio.emit('datagen-events', data=docs_json)
 
             # timing

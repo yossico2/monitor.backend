@@ -1,6 +1,6 @@
 import abc
+import json
 import time
-import redis
 import socketio
 import threading
 import eventlet
@@ -8,10 +8,11 @@ from datetime import datetime
 from typing import Generic, List
 from elasticsearch.client import Elasticsearch
 from elasticsearch_dsl import Search
+from pydantic.json import pydantic_encoder
 
 import config
 import utils
-from model import T, PowerBlock, pydantic_to_json
+from model import T, PowerBlock
 from redis_cache import RedisCache, Bucket, BUCKET_TIMEDELTA
 
 # ----------------------------------------------------------------------------------
@@ -214,8 +215,7 @@ class Streamer:
 
         power_blocks = self.fetcher.fetch(start_date_ms, end_date_ms)
 
-        power_blocks_json = pydantic_to_json(power_blocks)
-
+        power_blocks_json = json.dumps(power_blocks, default=pydantic_encoder)
         self.sio.emit('power-blocks', data=power_blocks_json, to=self.sid)
 
     def _upstream_data_after_date(self, date_ms: int):
@@ -293,9 +293,8 @@ class Streamer:
                     self._sleep(config.PERIOD_MS/1000)
                     continue  # pause
 
-                pb_json = pydantic_to_json(power_block)
-
-                self.sio.emit('power-blocks', data=pb_json, to=self.sid)
+                power_block_json = json.dumps(power_block, default=pydantic_encoder)
+                self.sio.emit('power-blocks', data=power_block_json, to=self.sid)
 
                 #  print timestamp of power_block
                 if config.DEBUG_STREAMER:

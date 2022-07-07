@@ -1,8 +1,11 @@
 import random
 import socketio
+import json
+from typing import List
 from datetime import datetime, timezone
 
 import config
+from model import PowerBlock
 import utils
 from ring import Ring
 from redis_cache import RedisCache
@@ -36,10 +39,11 @@ class StateUpdater:
             self.stop_flag = True
             self.thread.join()
 
-    def on_datagen_events(self, sid: str, events):
-        for e in events:
-            e['state'] = stateInit
-            self.ring.push(e)
+    def on_datagen_events(self, sid: str, events_json):
+        events_dict = json.loads(events_json)
+        power_blocks = [PowerBlock(**d) for d in events_dict]
+        for pb in power_blocks:
+            self.ring.push(pb)
         if config.DEBUG_STATE_UPDATE:
             print(f'on_datagen_events: ({self.ring.count()} events)')
 
@@ -70,19 +74,19 @@ class StateUpdater:
     def update_event_state(self, e):
 
         now = utils.datetime_to_ms_since_epoch(datetime.now(tz=timezone.utc))
-        timestamp = e['timestamp']
+        timestamp = e.timestamp
         if now - timestamp < 2000:
             #  unmodified
             return False
 
-        state = e['state']
+        state = e.state
 
         if state == stateInit:
             if now - timestamp > 5000:
                 return False  # unmodified
             if random.random() < 0.5:
                 return False  # unmodified
-            e['state'] = stateRequest
+            e.state = stateRequest
             return True
 
         if state == stateRequest:
@@ -90,7 +94,7 @@ class StateUpdater:
                 return False  # unmodified
             if random.random() < 0.2:
                 return False  # unmodified (failed to get response)
-            e['state'] = stateResponse
+            e.state = stateResponse
             return True
 
         if state == stateResponse:
@@ -98,7 +102,7 @@ class StateUpdater:
                 return False  # unmodified
             if random.random() < 0.95:
                 return False  # unmodified (not resolved)
-            e['state'] = stateResolved
+            e.state = stateResolved
             return True
 
         if state == stateResolved:
