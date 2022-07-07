@@ -1,4 +1,11 @@
+from threading import Timer
 from datetime import datetime, timezone
+
+class RepeatTimer(Timer):
+    def run(self):
+        while not self.finished.wait(self.interval):
+            self.function(*self.args, **self.kwargs)
+
 
 
 def datetime_to_ms_since_epoch(dt: datetime) -> int:

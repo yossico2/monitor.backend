@@ -3,6 +3,7 @@ import socketio
 from datetime import datetime, timezone
 from threading import Timer
 
+import config
 import utils
 from ring import Ring
 
@@ -18,52 +19,51 @@ stateResponse = 2
 stateResolved = 3
 
 
-class RepeatTimer(Timer):
-    def run(self):
-        while not self.finished.wait(self.interval):
-            self.function(*self.args, **self.kwargs)
-
-
 class StateUpdater:
-    def __init__(self, sio:socketio.Server):
+    def __init__(self, sio: socketio.Server):
         self.sio = sio
         ring_size = 5 * MINUTE / PERIOD
         self.ring = Ring(ring_size, key='timestamp')
+        self.thread = None
+        self.stop_flag = False
 
     def start(self):
-        self.timer = RepeatTimer(interval=1, function=self.update_events_state)
-        self.timer.setDaemon(True)
-        self.timer.start()
+        self.thread = self.sio.start_background_task(self.update_events_state)
 
     def stop(self):
-        if self.timer:
-            self.timer.cancel()
+        if self.thread:
+            self.stop_flag = True
+            self.thread.join()
 
     def on_datagen_events(self, sid: str, events):
         for e in events:
             e['state'] = stateInit
             self.ring.push(e)
-        print(f'on_datagen_events: ({self.ring.count()} events)')
+        if config.DEBUG_STATE_UPDATE:
+            print(f'on_datagen_events: ({self.ring.count()} events)')
 
     def update_events_state(self):
-        events = self.ring.toArray()
-        updated = []
-        for e in events:
-            if self.update_event_state(e):
-                updated.append(e)
-        
-        # update cache
-        # lilo:TODO
+        while True:
+            if self.stop_flag:
+                break
 
-        # update db
-        # lilo:TODO
+            events = self.ring.toArray()
+            updated = []
+            for e in events:
+                if self.update_event_state(e):
+                    updated.append(e)
 
-        # emit to clients
-        # lilo:TODO
-        # if len(updated) > 0:
-            # self.sio.emit('pb-events-state', data=updated)
-            # print('update_events_state')
-            # self.sio.emit('foo', data='hello', broadcast=True, include_self=False)
+            # update cache
+            # lilo:TODO
+
+            # update db
+            # lilo:TODO
+
+            # emit to clients
+            if len(updated) > 0:
+                self.sio.emit('pb-events-state', data=updated)
+
+            self.sio.sleep(SEC/PERIOD)
 
     def update_event_state(self, e):
 
