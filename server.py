@@ -1,5 +1,6 @@
 import sys
 import signal
+import redis
 import socketio
 import eventlet
 import threading
@@ -12,6 +13,11 @@ from streamer import Streamer
 from state_updater import StateUpdater
 
 import config
+
+import logging
+logger = logging.getLogger(__name__)
+#lilo: logging.basicConfig(level=logging.DEBUG)
+
 
 def signal_handler(sig, frame):
     print('user exit.')
@@ -29,7 +35,10 @@ class MonitorServer:
 
         self.sio = socketio.Server(cors_allowed_origins='*')
 
-        self.state_updater = StateUpdater(self.sio)
+        self.redis_client = redis.Redis(config.REDIS_HOST)
+
+        self.state_updater = StateUpdater(
+            sio=self.sio, redis_client=self.redis_client)
 
         self.sio.on('connect', self.on_connect)
         self.sio.on('disconnect', self.on_disconnect)
@@ -46,7 +55,7 @@ class MonitorServer:
         self.state_updater.start()
         app = socketio.WSGIApp(self.sio)
         eventlet.wsgi.server(eventlet.listen(('', config.SERVER_PORT)), app)
-    
+
     def stop(self):
         if self.state_updater:
             self.state_updater.stop()
@@ -54,7 +63,8 @@ class MonitorServer:
     def on_connect(self, sid: str, environ):
         print(f'>>> client connected (sid: {sid})')
         with self._clients_lock:
-            self._clients[sid] = Streamer(sid=sid, sio=self.sio)
+            self._clients[sid] = Streamer(
+                sid=sid, sio=self.sio, redis_client=self.redis_client)
 
     def on_disconnect(self, sid: str):
         print(f'>>> client disconnected {sid}')

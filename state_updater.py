@@ -1,4 +1,5 @@
 import random
+import redis
 import socketio
 from datetime import datetime, timezone
 from threading import Timer
@@ -20,8 +21,9 @@ stateResolved = 3
 
 
 class StateUpdater:
-    def __init__(self, sio: socketio.Server):
+    def __init__(self, sio: socketio.Server, redis_client: redis.Redis):
         self.sio = sio
+        self.redis_client = redis_client
         ring_size = 5 * MINUTE / PERIOD
         self.ring = Ring(ring_size, key='timestamp')
         self.thread = None

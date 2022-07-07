@@ -1,63 +1,22 @@
 import abc
 import time
-import json
-import typing
+import redis
+import socketio
 import threading
 import eventlet
 from datetime import datetime
-from typing import Generic, Type, TypeVar, List
-
+from typing import Generic, List
 from elasticsearch.client import Elasticsearch
 from elasticsearch_dsl import Search
 
-import pydantic
-from pydantic import BaseModel, validator
-from pydantic.json import pydantic_encoder
-
-import redis
-import socketio
-
 import config
 import utils
-from model import TimestampModel, PowerBlock
-
-import logging
-logger = logging.getLogger(__name__)
-#lilo: logging.basicConfig(level=logging.DEBUG)
-
-# bucket size in time units
-BUCKET_TIMEDELTA = 1000  # ms
-
-
-class Bucket(BaseModel):
-    '''
-    A bucket is the unit of fetching/caching data.
-    '''
-
-    start: int
-
-    @property
-    def end(self) -> int:
-        return self.start + BUCKET_TIMEDELTA
-
-    @validator("start")
-    def align_start(cls, start: int) -> int:
-        '''Align bucket start date.'''
-        return start // BUCKET_TIMEDELTA * BUCKET_TIMEDELTA
-
-    def next(self) -> "Bucket":
-        '''Return the next bucket.'''
-        return Bucket(start=self.end)
-
-    class Config:
-        frozen = True
+from model import T, PowerBlock, pydantic_to_json
+from redis_cache import RedisCache, Bucket, BUCKET_TIMEDELTA
 
 # ----------------------------------------------------------------------------------
 # Cache utils
 # ----------------------------------------------------------------------------------
-
-
-T = TypeVar("T", bound=TimestampModel)
 
 
 class GenericFetcher(abc.ABC, Generic[T]):
@@ -82,33 +41,12 @@ class GenericFetcher(abc.ABC, Generic[T]):
     '''
 
     @abc.abstractmethod
-    def bucket_cache_key(self, bucket: Bucket) -> str:
-        raise NotImplementedError()
-
-    @abc.abstractmethod
-    def get_cache_ttl(self, bucket: Bucket):
+    def get_redis_cache(self) -> RedisCache:
         raise NotImplementedError()
 
     @abc.abstractmethod
     def get_values_from_upstream(self, bucket: Bucket) -> List[T]:
         raise NotImplementedError()
-
-    @abc.abstractmethod
-    def get_redis_client(self):
-        raise NotImplementedError()
-
-    model_type = None
-
-    def get_model_type(self) -> Type:
-        '''
-        Python non-documented black magic to fetch current model.
-        Ref: https://stackoverflow.com/a/60984681
-        '''
-        if not self.model_type:
-            parametrized_generic_fetcher = self.__orig_bases__[
-                0]  # type: ignore
-            self.model_type = typing.get_args(parametrized_generic_fetcher)[0]
-        return self.model_type
 
     def fetch(self, start_date_ms: int, end_date_ms: int) -> List[T]:
 
@@ -119,41 +57,26 @@ class GenericFetcher(abc.ABC, Generic[T]):
         buckets = self._init_buckets(start_date_ms, end_date_ms)
 
         data_items: list[T] = []
+        redis_cache = self.get_redis_cache()
         for bucket in buckets:
 
             # Check if cache contains bucket
-            cache_key = self.bucket_cache_key(bucket)
-            cached_raw_value = self.get_redis_client().get(cache_key)
-            if cached_raw_value is not None:
-
-                # Cache Hit
-                cached_items: list[T] = pydantic.parse_raw_as(
-                    list[self.get_model_type()],
-                    cached_raw_value  # type: ignore
-                )
-
+            cached_items: list[T] = redis_cache.get_bucket(bucket)
+            if len(cached_items) > 0:
+                # cache hit
                 data_items += cached_items
                 continue
 
-            # Cache Miss (fetch bucket from the upstream)
+            # cache miss (fetch bucket from the upstream)
             fetched_items = self.get_values_from_upstream(bucket)
 
+            # cache items
             # save the value to the cache only when whole block fetched
             # (partial blocks are not cached, thus will be fetched again when required)
             whole_bucket_fetched = len(
                 fetched_items) > 0 and fetched_items[-1].timestamp == (bucket.end - config.PERIOD_MS)
-
-            # Cache items
             if whole_bucket_fetched:
-                raw_values = json.dumps(
-                    fetched_items,
-                    separators=(",", ":"),
-                    default=pydantic_encoder)
-
-                self.get_redis_client().set(
-                    cache_key,
-                    raw_values,
-                    ex=self.get_cache_ttl(bucket))
+                redis_cache.cache_items(fetched_items)
 
             data_items += fetched_items
 
@@ -184,6 +107,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
 # PowerBlock Fetcher
 # ----------------------------------------------------------------------------------
 
+
 class PowerBlockFetcher(GenericFetcher[PowerBlock]):
     '''
     PowerBlock fetcher.
@@ -196,21 +120,13 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
     '''
 
     def __init__(self, redis_client: redis.Redis, redis_ttl_sec: int, es: Elasticsearch, power_blocks_index: str):
-        self.redis_client = redis_client
         self.es = es
+        self.redis_cache = RedisCache(
+            redis_client=redis_client, redis_ttl_sec=redis_ttl_sec)
         self.power_blocks_index = power_blocks_index
-        self.redis_ttl_sec = redis_ttl_sec
 
-    def get_redis_client(self):
-        return self.redis_client
-
-    def bucket_cache_key(self, bucket: Bucket) -> str:
-        '''return the cache key by the bucket start date.'''
-        return f'power_blocks:{bucket.start}'
-
-    def get_cache_ttl(self, bucket: Bucket):
-        # all buckets have the same ttl
-        return self.redis_ttl_sec
+    def get_redis_cache(self) -> RedisCache:
+        return self.redis_cache
 
     def get_values_from_upstream(self, bucket: Bucket) -> List[PowerBlock]:
         '''
@@ -264,7 +180,8 @@ class Streamer:
     def __init__(
         self,
         sid: str,
-        sio: socketio.Server
+        sio: socketio.Server,
+        redis_client: redis.Redis
     ) -> None:
 
         # SocketIO
@@ -275,9 +192,6 @@ class Streamer:
         self.paused = False
 
         self.streaming_lock = threading.Lock()
-
-        # Redis (cache)
-        redis_client = redis.Redis(config.REDIS_HOST)
 
         # ElasticSearch (upstream)
         self.es = Elasticsearch(hosts=[config.ES_HOST])
@@ -301,10 +215,7 @@ class Streamer:
 
         power_blocks = self.fetcher.fetch(start_date_ms, end_date_ms)
 
-        power_blocks_json = [
-            json.dumps(power_block, default=pydantic_encoder)
-            for power_block in power_blocks
-        ]
+        power_blocks_json = pydantic_to_json(power_blocks)
 
         self.sio.emit('power-blocks', data=power_blocks_json, to=self.sid)
 
@@ -383,15 +294,14 @@ class Streamer:
                     self._sleep(config.PERIOD_MS/1000)
                     continue  # pause
 
-                power_block_json = json.dumps(
-                    power_block, default=pydantic_encoder)
+                pb_json = pydantic_to_json(power_block)
 
-                self.sio.emit('power-blocks',
-                              data=power_block_json, to=self.sid)
+                self.sio.emit('power-blocks', data=pb_json, to=self.sid)
 
                 #  print timestamp of power_block
                 if config.DEBUG_STREAMER:
-                    print(f'emit power-block (timestamp: {power_block.timestamp})')
+                    print(
+                        f'emit power-block (timestamp: {power_block.timestamp})')
 
                 self._sleep(config.PERIOD_MS/1000)
 
