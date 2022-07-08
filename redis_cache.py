@@ -110,19 +110,22 @@ class RedisCache(Generic[T]):
             start_timestamp=items[0].timestamp,
             end_timestamp=items[-1].timestamp + BUCKET_TIMEDELTA)
 
-        # create lookup map
-        cached_items_by_timestamp = {
-            cached_item.timestamp: cached_item for cached_item in cached_items}
+        # create a dictionary of updated items by timestamp
+        items_by_timestamp = {
+            item.timestamp: item for item in items
+        }
 
-        # update items
-        for updated_item in items:
-            cached_item = cached_items_by_timestamp.get(
-                updated_item.timestamp)
-            if cached_item:
-                cached_item.state = updated_item.state
+        # walk over all cached items, replacing the ones updated
+        new_items = []
+        for cached_item in cached_items:
+            updated_item = items_by_timestamp.get(cached_item.timestamp)
+            if updated_item:
+                new_items.append(updated_item)
+            else:
+                new_items.append(cached_item)
 
         # put items back in cache
-        self.set_items(items)
+        self.set_items(new_items)
 
     def set_items(self, items: List[T]):
 

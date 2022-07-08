@@ -56,7 +56,7 @@ class MonitorServer:
     def start(self):
         print('starting monitor backend server ... ')
         # lilox
-        # self.state_updater.start()
+        self.state_updater.start()
         app = socketio.WSGIApp(self.sio)
         eventlet.wsgi.server(eventlet.listen(('', config.SERVER_PORT)), app)
 

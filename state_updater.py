@@ -1,8 +1,9 @@
+import json
 import random
 import socketio
-import json
-from typing import List
+import eventlet
 from datetime import datetime, timezone
+from pydantic.json import pydantic_encoder
 
 import config
 from model import PowerBlock
@@ -54,35 +55,37 @@ class StateUpdater:
 
             events = self.ring.toArray()
             if len(events) > 0:
-                updated = []
+                pb_updated = []
                 for e in events:
                     if self.update_event_state(e):
-                        updated.append(e)
-                if len(updated) > 0:
+                        pb_updated.append(e)
+                if len(pb_updated) > 0:
                     # lilo:TODO
                     # update cache
-                    self.redis_cache.update_items(updated)
+                    self.redis_cache.update_items(pb_updated)
 
                     # update db
                     # lilo:TODO
 
                     # emit to clients
-                    self.sio.emit('pb-events-state', data=updated)
+                    pb_updated_json = json.dumps(pb_updated, default=pydantic_encoder)
+                    self.sio.emit('pb-state-updates', data=pb_updated_json)
+                    print(f'lilo ----------- pb-state-updates: ({len(pb_updated)} items)')
 
-            self.sio.sleep(SEC/PERIOD)
+            eventlet.sleep(1)
 
     def update_event_state(self, e):
 
         now = utils.datetime_to_ms_since_epoch(datetime.now(tz=timezone.utc))
-        timestamp = e.timestamp
-        if now - timestamp < 2000:
+        if now - e.timestamp < 2000:
             #  unmodified
+            # lilox (now < e.timestamp)?
             return False
 
         state = e.state
 
         if state == stateInit:
-            if now - timestamp > 5000:
+            if now - e.timestamp > 5000:
                 return False  # unmodified
             if random.random() < 0.5:
                 return False  # unmodified
@@ -90,7 +93,7 @@ class StateUpdater:
             return True
 
         if state == stateRequest:
-            if now - timestamp > 7000:
+            if now - e.timestamp > 7000:
                 return False  # unmodified
             if random.random() < 0.2:
                 return False  # unmodified (failed to get response)
@@ -98,7 +101,7 @@ class StateUpdater:
             return True
 
         if state == stateResponse:
-            if now - timestamp > 7000:
+            if now - e.timestamp > 7000:
                 return False  # unmodified
             if random.random() < 0.95:
                 return False  # unmodified (not resolved)

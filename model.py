@@ -9,9 +9,6 @@ class TimestampModel(BaseModel):
     timestamp: int
 
 
-T = TypeVar("T", bound=TimestampModel)
-
-
 class PowerBlock(TimestampModel):
     '''
     Model to keep track of an individual PowerBlock.
@@ -20,3 +17,6 @@ class PowerBlock(TimestampModel):
     frequency: float
     power: int
     state: int = 0
+
+ # lilox: T = TypeVar("T", bound=TimestampModel)
+T = TypeVar("T", bound=PowerBlock)

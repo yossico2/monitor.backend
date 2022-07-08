@@ -35,14 +35,19 @@ class Ring:
             return self.map.get(key)
         return None
 
-    def push(self, item:Dict):
+    def _get_timestamp(self, item):
+        return getattr(item, self.key)
+
+    def push(self, item: Dict):
         end = (self._start + self._count) % self._size
         self._list[end] = item
         if self.key:
-            self.map[getattr(item, self.key)] = item
+            timestamp = self._get_timestamp(item)
+            self.map[timestamp] = item
         if self._count == self._size:
             if self.key:
-                self.map.pop(self._list[self._start][self.key], None)
+                timestamp = self._get_timestamp(self._list[self._start])
+                self.map.pop(timestamp, None)
             self._start = (self._start + 1) % self._size  # full, overwrite
         else:
             self._count += 1
@@ -53,7 +58,8 @@ class Ring:
 
         item = self._list[self._start]
         if self.key:
-            self.map.pop(getattr(item, self.key), None)
+            timestamp = self._get_timestamp(item)
+            self.map.pop(timestamp, None)
         self._list[self._start] = None
         self._start = (self._start + 1) % self._size
         self._count -= 1
@@ -67,10 +73,8 @@ class Ring:
             cb(self._list[i])
             i = (i + 1) % self._size
             count -= 1
-            
 
     def toArray(self):
         arr = []
-        i = 0
         self.forEach(lambda item: arr.append(item))
         return arr

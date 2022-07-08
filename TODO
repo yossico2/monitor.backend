@@ -1,0 +1,1 @@
+- update_event_state: if now - e.timestamp < 2000: (negative)

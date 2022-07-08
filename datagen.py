@@ -1,17 +1,20 @@
+import json
 import time
-import math
 import random
 import threading
 import socketio
-import json
+import eventlet
 from datetime import datetime, timezone
 from elasticsearch_dsl import Document, Date, Integer, Float
 from elasticsearch_dsl.connections import connections
 from elasticsearch.helpers import bulk
 
 import config
+from state_updater import SEC
 import utils
 
+def _now():
+    return utils.datetime_to_ms_since_epoch(datetime.now(tz=timezone.utc))
 
 class PowerBlock_Document(Document):
 
@@ -28,6 +31,9 @@ class DataGenerator:
 
         # define a default es-client
         self.connection = connections.create_connection(hosts=[es_host])
+
+        # sio client
+        self.sio = socketio.Client()
 
         # sio thread-events
         self.event_sio_thread_start = threading.Event()
@@ -47,8 +53,12 @@ class DataGenerator:
         print('starting datagen server ... ')
 
         # start and wait for gendata thread
-        self.thread = threading.Thread(target=self.gendata_thread, daemon=True)
-        self.thread.start()
+        # lilox
+        # self.thread = threading.Thread(target=self.gendata_thread, daemon=True)
+        # self.thread.start()
+        # self.event_gendata_thread_start.wait()
+
+        self.thread = self.sio.start_background_task(self.gendata_thread)
         self.event_gendata_thread_start.wait()
 
     def stop(self):
@@ -70,8 +80,7 @@ class DataGenerator:
         # signal gendata thread started
         self.event_gendata_thread_start.set()
 
-        # sio.client connects to datagen
-        self.sio = socketio.Client()
+        # connect sio.client
         server_sio_address = f'http://localhost:{config.SERVER_PORT}'
         while True:
             try:
@@ -79,65 +88,53 @@ class DataGenerator:
                 self.sio.connect(server_sio_address, wait=False, wait_timeout=0.1)
                 break
             except:
-                time.sleep(0.1) # sec
+                eventlet.sleep(0.1) # sec
 
-        start_date = datetime.now(tz=timezone.utc)
+        # collect objects for bulk index
+        docs: list(PowerBlock_Document) = []
 
-        if config.DEBUG_DATAGEN:
-            ts = utils.datetime_to_ms_since_epoch(start_date)
-            print(f'datagen (start_date: {ts})')
-
-        # start_date (align to 100 ms start)
-        aligned_start_date = datetime.fromtimestamp(math.floor(
-            10*start_date.timestamp())/10, tz=start_date.tzinfo)
-        timestamp = utils.datetime_to_ms_since_epoch(aligned_start_date)
+        # bulk every 1 sec
+        now = _now()
+        last_bulk = now
 
         # generate data
         while not self.stop_flag:
 
-            # timing
-            if config.DEBUG_DATAGEN:
-                timing_start = time.time()
+            # collect into buffer
+            now_aligned_period = _now() // config.PERIOD_MS * config.PERIOD_MS
 
-            # collect PowerBlock_Document objects for bulk index
-            docs: list(PowerBlock_Document) = []
+            doc = PowerBlock_Document(
+                meta={'id': now_aligned_period},
+                timestamp=now_aligned_period,
+                frequency=random.randrange(1e3, 40e9),
+                power=random.randrange(10, 100))
 
-            for _ in range(10):  # bulk 10 objects every 1 sec.
+            docs.append(doc)
 
-                doc = PowerBlock_Document(
-                    meta={'id': timestamp},
-                    timestamp=timestamp,
-                    frequency=random.randrange(1e3, 40e9),
-                    power=random.randrange(10, 100))
+            # bulk every 1 sec
+            if now - last_bulk > SEC:
+                # timing
+                if config.DEBUG_DATAGEN:
+                    timing_start = time.time()
 
-                docs.append(doc)
+                # bulk to es
+                bulk(self.connection, (b.to_dict(include_meta=True) for b in docs))
+                last_bulk = now
 
-                # advance time
-                timestamp += config.PERIOD_MS
+                # emit to sio
+                docs_dict = [d.to_dict() for d in docs]
+                docs_json = json.dumps(docs_dict)
+                self.sio.emit('datagen-events', data=docs_json)
 
-            # bulk index to es
-            bulk(self.connection, (b.to_dict(include_meta=True) for b in docs))
+                # clear buffer
+                docs = []
 
-            # emit events to sio
-            docs_dict = [d.to_dict() for d in docs]
-            docs_json = json.dumps(docs_dict)
-            self.sio.emit('datagen-events', data=docs_json)
+                # timing
+                if config.DEBUG_DATAGEN:
+                    duration_ms = round(1000*(time.time() - timing_start))
+                    print(f'es-bulk {len(docs)} items ({duration_ms} ms)')
 
-            # timing
-            if config.DEBUG_DATAGEN:
-                duration_ms = round(1000*(time.time() - timing_start))
-                print(f'es-bulk {len(docs)} items ({duration_ms} ms)')
-
-            # sleep (100ms)
-            time.sleep(config.PERIOD_MS/1000)
+            # sleep PERIOD_MS
+            eventlet.sleep(config.PERIOD_MS/1000)
 
         self.event_gendata_thread_stop.set()  # signal thread stopped
-
-
-# if __name__ == "__main__":
-#     # simulate data
-#     print('generating data to es ... ')
-#     data_generator = DataGenerator(es_host=config.ES_HOST)
-#     data_generator.start()
-#     time.sleep(1)
-#     data_generator.stop()
