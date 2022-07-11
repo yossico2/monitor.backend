@@ -13,7 +13,7 @@ import config
 from state_updater import SEC
 import utils
 
-def _now():
+def _now_ms():
     return utils.datetime_to_ms_since_epoch(datetime.now(tz=timezone.utc))
 
 class PowerBlock_Document(Document):
@@ -94,21 +94,22 @@ class DataGenerator:
         docs: list(PowerBlock_Document) = []
 
         # bulk every 1 sec
-        now = _now()
-        last_bulk = now
+        last_bulk = _now_ms()
 
-        # generate data
+        # generate data while not stop flag
         while not self.stop_flag:
 
-            # collect into buffer
-            now_aligned_period = _now() // config.PERIOD_MS * config.PERIOD_MS
+            now = _now_ms()
 
+            # create a new event with aligned timestamp
+            now_aligned_period = now // config.PERIOD_MS * config.PERIOD_MS
             doc = PowerBlock_Document(
                 meta={'id': now_aligned_period},
                 timestamp=now_aligned_period,
                 frequency=random.randrange(1e3, 40e9),
                 power=random.randrange(10, 100))
 
+            # collect into bulk buffer
             docs.append(doc)
 
             # bulk every 1 sec
@@ -126,13 +127,13 @@ class DataGenerator:
                 docs_json = json.dumps(docs_dict)
                 self.sio.emit('datagen-events', data=docs_json)
 
-                # clear buffer
-                docs = []
-
                 # timing
                 if config.DEBUG_DATAGEN:
                     duration_ms = round(1000*(time.time() - timing_start))
                     print(f'es-bulk {len(docs)} items ({duration_ms} ms)')
+
+                # clear bulk buffer
+                docs = []
 
             # sleep PERIOD_MS
             eventlet.sleep(config.PERIOD_MS/1000)

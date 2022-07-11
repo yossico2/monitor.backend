@@ -64,13 +64,14 @@ class StateUpdater:
                     # update cache
                     self.redis_cache.update_items(pb_updated)
 
-                    # update db
+                    # state-update -> db
                     # lilo:TODO
 
                     # emit to clients
                     pb_updated_json = json.dumps(pb_updated, default=pydantic_encoder)
                     self.sio.emit('pb-state-updates', data=pb_updated_json)
-                    print(f'lilo ----------- pb-state-updates: ({len(pb_updated)} items)')
+                    if config.DEBUG_STATE_UPDATE:
+                        print(f'pb-state-updates: ({len(pb_updated)} items)')
 
             eventlet.sleep(1)
 
