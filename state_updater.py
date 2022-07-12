@@ -46,7 +46,7 @@ class StateUpdater:
         for pb in power_blocks:
             self.ring.push(pb)
         if config.DEBUG_STATE_UPDATE:
-            print(f'on_datagen_events: ({self.ring.count()} events)')
+            print(f'on_datagen_events: ({len(power_blocks)} events), ring size: {self.ring.count()}')
 
     def update_events_state(self):
         while True:
@@ -60,7 +60,6 @@ class StateUpdater:
                     if self.update_event_state(e):
                         pb_updated.append(e)
                 if len(pb_updated) > 0:
-                    # lilo:TODO
                     # update cache
                     self.redis_cache.update_items(pb_updated)
 
@@ -78,33 +77,38 @@ class StateUpdater:
     def update_event_state(self, e):
 
         now = utils.datetime_to_ms_since_epoch(datetime.now(tz=timezone.utc))
-        if now - e.timestamp < 2000:
-            #  unmodified
-            # lilox (now < e.timestamp)?
-            return False
 
         state = e.state
 
+        # init -> request
         if state == stateInit:
-            if now - e.timestamp > 5000:
+            if now - e.timestamp < 3000:
+                return False # unmodified
+            if now - e.timestamp > 6000:
                 return False  # unmodified
-            if random.random() < 0.5:
+            if random.random() < 0.2:
                 return False  # unmodified
             e.state = stateRequest
             return True
 
+        # request -> response
         if state == stateRequest:
-            if now - e.timestamp > 7000:
+            if now - e.timestamp < 15000:
+                return False # unmodified
+            if now - e.timestamp > 17000:
                 return False  # unmodified
             if random.random() < 0.2:
                 return False  # unmodified (failed to get response)
             e.state = stateResponse
             return True
 
+        # response -> resolved
         if state == stateResponse:
-            if now - e.timestamp > 7000:
+            if now - e.timestamp < 25000:
+                return False # unmodified
+            if now - e.timestamp > 27000:
                 return False  # unmodified
-            if random.random() < 0.95:
+            if random.random() < 0.99:
                 return False  # unmodified (not resolved)
             e.state = stateResolved
             return True
