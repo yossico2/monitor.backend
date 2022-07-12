@@ -51,13 +51,6 @@ class DataGenerator:
     def start(self):
 
         print('starting datagen server ... ')
-
-        # start and wait for gendata thread
-        # lilox
-        # self.thread = threading.Thread(target=self.gendata_thread, daemon=True)
-        # self.thread.start()
-        # self.event_gendata_thread_start.wait()
-
         self.thread = self.sio.start_background_task(self.gendata_thread)
         self.event_gendata_thread_start.wait()
 

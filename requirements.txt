@@ -6,3 +6,4 @@ eventlet
 python-socketio
 websocket-client
 requests # for sio client
+typing_extensions=4.3.0

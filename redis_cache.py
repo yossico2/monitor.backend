@@ -1,6 +1,6 @@
 import json
 import redis
-import typing
+from typing_extensions import get_args
 import pydantic
 from pydantic import BaseModel, validator
 from pydantic.json import pydantic_encoder
@@ -50,7 +50,7 @@ class RedisCache(Generic[T]):
         if cached_raw_value is not None:
             # cache hit
             cached_items: list[T] = pydantic.parse_raw_as(
-                list[self._get_model_type()],
+                List[self._get_model_type()],
                 cached_raw_value  # type: ignore
             )
 
@@ -94,7 +94,7 @@ class RedisCache(Generic[T]):
         if cached_raw_value is not None:
             # cache hit
             cached_items: list[T] = pydantic.parse_raw_as(
-                list[self._get_model_type()],
+                List[self._get_model_type()],
                 cached_raw_value  # type: ignore
             )
 
@@ -195,5 +195,5 @@ class RedisCache(Generic[T]):
         if not self.model_type:
             parametrized_generic_fetcher = self.__orig_bases__[
                 0]  # type: ignore
-            self.model_type = typing.get_args(parametrized_generic_fetcher)[0]
+            self.model_type = get_args(parametrized_generic_fetcher)[0]
         return self.model_type
