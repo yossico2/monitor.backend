@@ -120,7 +120,10 @@ class MonitorServer:
         client_streamer.stop()
 
     def on_fetch_power_block_data(self, sid: str, timestamp: datetime):
-        # lilo:TODO
+        '''
+        called by client to fetch power data within power-block
+        '''
+        # lilo: for now just simulate power data
         print(
             f'>>> on_fetch_power_block_data (sid: {sid}, timestamp: {timestamp})')
         data = []

@@ -33,7 +33,7 @@ class StateUpdater:
         self.stop_flag = False
 
     def start(self):
-        self.thread = self.sio.start_background_task(self.update_events_state)
+        self.thread = self.sio.start_background_task(self.update_state_background_task)
 
     def stop(self):
         if self.thread:
@@ -48,30 +48,36 @@ class StateUpdater:
         if config.DEBUG_STATE_UPDATE:
             print(f'on_datagen_events: ({len(power_blocks)} events), ring size: {self.ring.count()}')
 
-    def update_events_state(self):
+    def update_state_background_task(self):
+
         while True:
             if self.stop_flag:
                 break
 
-            events = self.ring.toArray()
-            if len(events) > 0:
-                pb_updated = []
-                for e in events:
+            all_ring_events = self.ring.toArray()
+            if len(all_ring_events) > 0:
+                
+                # collect updated events
+                updated_events = []
+                for e in all_ring_events:
                     if self.update_event_state(e):
-                        pb_updated.append(e)
-                if len(pb_updated) > 0:
-                    # update cache
-                    self.redis_cache.update_items(pb_updated)
+                        updated_events.append(e)
 
-                    # state-update -> db
+                # update cache and db
+                if len(updated_events) > 0:
+                    # update cache
+                    self.redis_cache.update_items(updated_events)
+
+                    # updated_events -> db
                     # lilo:TODO
 
                     # emit to clients
-                    pb_updated_json = json.dumps(pb_updated, default=pydantic_encoder)
+                    pb_updated_json = json.dumps(updated_events, default=pydantic_encoder)
                     self.sio.emit('pb-state-updates', data=pb_updated_json)
                     if config.DEBUG_STATE_UPDATE:
-                        print(f'pb-state-updates: ({len(pb_updated)} items)')
+                        print(f'pb-state-updates: ({len(updated_events)} items)')
 
+            # sleep 1 sec
             eventlet.sleep(1)
 
     def update_event_state(self, e):

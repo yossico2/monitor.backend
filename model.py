@@ -18,5 +18,5 @@ class PowerBlock(TimestampModel):
     power: int
     state: int = 0
 
- # lilox: T = TypeVar("T", bound=TimestampModel)
+ # lilo: T = TypeVar("T", bound=TimestampModel)
 T = TypeVar("T", bound=PowerBlock)

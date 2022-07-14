@@ -15,6 +15,8 @@ import utils
 from model import T, PowerBlock
 from redis_cache import RedisCache, Bucket, BUCKET_TIMEDELTA
 
+STREAM_INTERVAL = config.PERIOD_MS/1000
+
 # ----------------------------------------------------------------------------------
 # Cache utils
 # ----------------------------------------------------------------------------------
@@ -49,7 +51,7 @@ class GenericFetcher(abc.ABC, Generic[T]):
     def get_values_from_upstream(self, bucket: Bucket) -> List[T]:
         raise NotImplementedError()
 
-    def _is_bucket_full(self, bucket:Bucket, fetched_items: List[T]):
+    def _is_bucket_full(self, bucket: Bucket, fetched_items: List[T]):
         return len(fetched_items) > 0 and fetched_items[-1].timestamp == (bucket.end - config.PERIOD_MS)
 
     def fetch(self, start_date_ms: int, end_date_ms: int) -> List[T]:
@@ -121,10 +123,10 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         power_blocks = fetcher.fetch(start-date, end-date)
     '''
 
-    def __init__(self, redis_cache: RedisCache, es: Elasticsearch, power_blocks_index: str):
+    def __init__(self, redis_cache: RedisCache, es: Elasticsearch, pb_index: str):
         self.es = es
         self.redis_cache = redis_cache
-        self.power_blocks_index = power_blocks_index
+        self.pb_index = pb_index
 
     def get_redis_cache(self) -> RedisCache:
         return self.redis_cache
@@ -143,13 +145,13 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
             fetch_timing_start = time.time()
 
         # ElasticSearch query
-        s = Search(using=self.es, index=self.power_blocks_index).filter(
+        s = Search(using=self.es, index=self.pb_index).filter(
             'range',
             timestamp={
                 'gte': start_date_ms,
                 'lt': end_date_ms,
             },
-        )  # .sort('timestamp')
+        )
 
         # We use scan() instead of execute() to fetch all the records, and wrap it with a
         # list() to pull everything in memory. As long as we fetch data in buckets of
@@ -200,7 +202,7 @@ class Streamer:
         self.fetcher = PowerBlockFetcher(
             redis_cache=redis_cache,
             es=self.es,
-            power_blocks_index=config.ES_POWER_BLOCKS_INDEX
+            pb_index=config.ES_POWER_BLOCKS_INDEX
         )
 
     def _sleep(self, duration):
@@ -213,10 +215,10 @@ class Streamer:
         start_date_ms = utils.datetime_to_ms_since_epoch(start_date)
         end_date_ms = utils.datetime_to_ms_since_epoch(end_date)
 
-        power_blocks = self.fetcher.fetch(start_date_ms, end_date_ms)
+        pb_array = self.fetcher.fetch(start_date_ms, end_date_ms)
 
-        power_blocks_json = json.dumps(power_blocks, default=pydantic_encoder)
-        self.sio.emit('power-blocks', data=power_blocks_json, to=self.sid)
+        pb_array_json = json.dumps(pb_array, default=pydantic_encoder)
+        self.sio.emit('power-blocks', data=pb_array_json, to=self.sid)
 
     def _upstream_data_after_date(self, date_ms: int):
         # get data item with timestamp greater than dt
@@ -261,19 +263,19 @@ class Streamer:
                     return  # stop streaming
 
             if self.paused:
-                self._sleep(config.PERIOD_MS/1000)
+                self._sleep(STREAM_INTERVAL)
                 continue  # pause
 
             #  fetch items
-            power_blocks: PowerBlock = self.fetcher.fetch(
+            pb_array: PowerBlock = self.fetcher.fetch(
                 start_date_ms, end_date_ms)
-            if len(power_blocks) == 0:
+            if len(pb_array) == 0:
                 # either no data in range or data not available yet in upstream
                 # (e.g: start-date/end-date in the future)
                 result = self._upstream_data_after_date(end_date_ms)
                 if len(result) == 0:
                     # no data >= end_date_ms available in upstream
-                    self._sleep(config.PERIOD_MS/1000)
+                    self._sleep(STREAM_INTERVAL)
                     continue
 
                 # advance range (skip data gap)
@@ -283,28 +285,27 @@ class Streamer:
                 continue
 
             # stream power_blocks
-            for power_block in power_blocks:
+            for pb in pb_array:
 
                 with self.streaming_lock:
                     if not self.streaming:
                         return  # stop streaming
 
                 while self.paused:
-                    self._sleep(config.PERIOD_MS/1000)
+                    self._sleep(STREAM_INTERVAL)
                     continue  # pause
 
-                power_block_json = json.dumps(power_block, default=pydantic_encoder)
-                self.sio.emit('power-blocks', data=power_block_json, to=self.sid)
+                pb_json = json.dumps(pb, default=pydantic_encoder)
+                self.sio.emit('power-blocks', data=pb_json, to=self.sid)
 
                 #  print timestamp of power_block
                 if config.DEBUG_STREAMER:
-                    print(
-                        f'emit power-block (timestamp: {power_block.timestamp})')
+                    print(f'emit power-block (timestamp: {pb.timestamp})')
 
-                self._sleep(config.PERIOD_MS/1000)
+                self._sleep(STREAM_INTERVAL)
 
             # advance range (skip no data)
-            start_date_ms = power_blocks[-1].timestamp + config.PERIOD_MS
+            start_date_ms = pb_array[-1].timestamp + config.PERIOD_MS
             end_date_ms = start_date_ms + BUCKET_TIMEDELTA
 
     def pause(self):

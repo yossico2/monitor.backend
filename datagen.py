@@ -13,8 +13,10 @@ import config
 from state_updater import SEC
 import utils
 
+
 def _now_ms():
     return utils.datetime_to_ms_since_epoch(datetime.now(tz=timezone.utc))
+
 
 class PowerBlock_Document(Document):
 
@@ -35,10 +37,6 @@ class DataGenerator:
         # sio client
         self.sio = socketio.Client()
 
-        # sio thread-events
-        self.event_sio_thread_start = threading.Event()
-        self.event_sio_thread_stop = threading.Event()
-
         # gendata thread-events
         self.event_gendata_thread_start = threading.Event()
         self.event_gendata_thread_stop = threading.Event()
@@ -51,7 +49,7 @@ class DataGenerator:
     def start(self):
 
         print('starting datagen server ... ')
-        self.thread = self.sio.start_background_task(self.gendata_thread)
+        self.thread = self.sio.start_background_task(self.gendata_background_task)
         self.event_gendata_thread_start.wait()
 
     def stop(self):
@@ -62,9 +60,7 @@ class DataGenerator:
             if config.DEBUG_DATAGEN:
                 print(f'data generation stopped.')
 
-            # lilo:TODO - stop sio thread
-
-    def gendata_thread(self):
+    def gendata_background_task(self):
         '''
         generate PowerBlock_Document objects
         bulk save to es every 1 sec.
@@ -78,10 +74,11 @@ class DataGenerator:
         while True:
             try:
                 print(f'datagen connecting to: {server_sio_address}')
-                self.sio.connect(server_sio_address, wait=False, wait_timeout=0.1)
+                self.sio.connect(server_sio_address,
+                                 wait=False, wait_timeout=0.1)
                 break
             except:
-                eventlet.sleep(0.1) # sec
+                eventlet.sleep(0.1)  # sec
 
         # collect objects for bulk index
         docs: list(PowerBlock_Document) = []
@@ -112,7 +109,8 @@ class DataGenerator:
                     timing_start = time.time()
 
                 # bulk to es
-                bulk(self.connection, (b.to_dict(include_meta=True) for b in docs))
+                bulk(self.connection, (b.to_dict(include_meta=True)
+                     for b in docs))
                 last_bulk = now
 
                 # emit to sio

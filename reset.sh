@@ -1,2 +1,4 @@
 #!/bin/bash
-redis start && es start
+redis start
+es start
+mysql start
