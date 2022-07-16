@@ -14,13 +14,17 @@ class StateSQL:
         self.cnx.close()
 
 
-    def init(self):
+    def init_db(self):
         '''
         init db and tables if not exists
         '''
         # lilo:TODO
         cursor = self.cnx.cursor()
         sql = 'CREATE DATABASE IF NOT EXISTS states DEFAULT CHARACTER SET = "utf8mb4";'
+        cursor.execute(sql)
+        sql = 'USE states;'
+        cursor.execute(sql)
+        sql = 'CREATE TABLE IF NOT EXISTS states (timestamp INT PRIMARY KEY, state INT DEFAULT 0);'
         cursor.execute(sql)
 
 
@@ -37,6 +41,6 @@ if __name__ == "__main__":
     state_sql = StateSQL(sql_host='localhost',
                          sql_user='mysql',
                          sql_password='mysql')
-    state_sql.init()
+    state_sql.init_db()
     time.sleep(1)
     state_sql.close()
