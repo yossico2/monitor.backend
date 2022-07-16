@@ -9,5 +9,7 @@ REDIS_TTL_SEC = 3600  # 1 hour
 ES_HOST = 'localhost'
 ES_POWER_BLOCKS_INDEX = 'power_blocks'
 SQL_HOST = 'localhost'
+SQL_USER = 'mysql'
+SQL_PASSWORD = 'mysql'
 
 PERIOD_MS = 100  # 100 ms

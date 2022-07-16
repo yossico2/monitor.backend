@@ -1,42 +1,54 @@
 import mysql.connector
+from typing import List, Tuple
 
+
+DB_NAME = 'states'
+TABLE_NAME = 'states'
 
 class StateSQL:
     def __init__(self, sql_host, sql_user, sql_password):
-        self.cnx = mysql.connector.connect(
+        self.db = mysql.connector.connect(
             host=sql_host,
             user=sql_user,
             password=sql_password,
             # database='states'
         )
 
+        self.cursor = self.db.cursor()
+
     def close(self):
-        self.cnx.close()
+        self.db.close()
 
     def init_db(self):
         '''
         init db and table if not exists
         '''
-        db_name = 'states'
-        table_name = 'states'
-
         # create (states) database if not exists
-        cursor = self.cnx.cursor()
-        sql = f'CREATE DATABASE IF NOT EXISTS {db_name} DEFAULT CHARACTER SET = "utf8mb4";'
-        cursor.execute(sql)
+        sql = f'CREATE DATABASE IF NOT EXISTS {DB_NAME} DEFAULT CHARACTER SET = "utf8mb4";'
+        self.cursor.execute(sql)
 
         # create (states) table if not exists
         sql = 'USE states;'
-        cursor.execute(sql)
-        sql = f'CREATE TABLE IF NOT EXISTS {table_name} (timestamp INT PRIMARY KEY, state INT DEFAULT 0);'
-        cursor.execute(sql)
+        self.cursor.execute(sql)
+        sql = f'CREATE TABLE IF NOT EXISTS {TABLE_NAME} (timestamp INT PRIMARY KEY, state INT DEFAULT 0);'
+        self.cursor.execute(sql)
 
     def update_state(self, timestamp: int, state: int):
         '''
         table schema: [timestamp, state]
         '''
-        # lilo:TODO
-        pass
+        sql = f'INSERT INTO {DB_NAME} (timestamp, state) VALUES ({timestamp}, {state})'
+        self.cursor.execute(sql)
+        self.db.commit()
+
+    def update_states(self, items: List[Tuple[int, int]]):
+        '''
+        table schema: [timestamp, state]
+        items is a list of tuples (timestamp, state)
+        '''
+        sql = f'INSERT INTO {DB_NAME} (timestamp, state) VALUES (%s, %s)'
+        self.cursor.executemany(sql, items)
+        self.db.commit()
 
     def get_state(self, timestamp: int):
         '''
@@ -61,5 +73,7 @@ if __name__ == "__main__":
                          sql_user='mysql',
                          sql_password='mysql')
     state_sql.init_db()
+    # state_sql.update_state(1,2)
+    # state_sql.update_states([(4,4), (5,5), (6,6)])
     time.sleep(1)
     state_sql.close()

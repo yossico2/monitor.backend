@@ -13,6 +13,7 @@ from typing import Dict
 import config
 from streamer import Streamer
 from redis_cache import RedisCache
+from state_sql import StateSQL
 from state_updater import StateUpdater
 
 import logging
@@ -37,11 +38,20 @@ class MonitorServer:
         self.sio = socketio.Server(cors_allowed_origins='*')
 
         self.redis_cache = RedisCache(
-            redis_client=redis.Redis(config.REDIS_HOST), 
+            redis_client=redis.Redis(config.REDIS_HOST),
             redis_ttl_sec=config.REDIS_TTL_SEC)
 
+        self.state_SQL = StateSQL(
+            sql_host=config.SQL_HOST,
+            sql_user=config.SQL_USER,
+            sql_password=config.SQL_PASSWORD
+        )
+        self.state_SQL.init_db()
+
         self.state_updater = StateUpdater(
-            sio=self.sio, redis_cache=self.redis_cache)
+            sio=self.sio,
+            redis_cache=self.redis_cache,
+            state_SQL=self.state_SQL)
 
         self.sio.on('connect', self.on_connect)
         self.sio.on('disconnect', self.on_disconnect)
@@ -67,8 +77,8 @@ class MonitorServer:
         print(f'>>> client connected (sid: {sid})')
         with self._clients_lock:
             self._clients[sid] = Streamer(
-                sid=sid, 
-                sio=self.sio, 
+                sid=sid,
+                sio=self.sio,
                 redis_cache=self.redis_cache)
 
     def on_disconnect(self, sid: str):
@@ -123,7 +133,7 @@ class MonitorServer:
         '''
         called by client to fetch power data within power-block
         '''
-        # lilo: for now just simulate power data
+        # lilo: for now just simulate events
         print(
             f'>>> on_fetch_power_block_data (sid: {sid}, timestamp: {timestamp})')
         data = []
