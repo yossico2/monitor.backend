@@ -1,5 +1,6 @@
 import abc
 import json
+import re
 import time
 import socketio
 import threading
@@ -11,6 +12,7 @@ from elasticsearch_dsl import Search
 from pydantic.json import pydantic_encoder
 
 import config
+from state_sql import StateSQL
 import utils
 from model import T, PowerBlock
 from redis_cache import RedisCache, Bucket, BUCKET_TIMEDELTA
@@ -123,10 +125,15 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         power_blocks = fetcher.fetch(start-date, end-date)
     '''
 
-    def __init__(self, redis_cache: RedisCache, es: Elasticsearch, pb_index: str):
+    def __init__(self,
+                 redis_cache: RedisCache,
+                 es: Elasticsearch,
+                 pb_index: str,
+                 state_SQL: StateSQL):
         self.es = es
         self.redis_cache = redis_cache
         self.pb_index = pb_index
+        self.state_SQL = state_SQL
 
     def get_redis_cache(self) -> RedisCache:
         return self.redis_cache
@@ -172,7 +179,30 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
             duration_ms = round(1000*(time.time() - fetch_timing_start))
             print(f'{len(blocks)} items fetched from upstream ({duration_ms} ms)')
 
+        # fetch state for all blocks
+        self.fetch_states(blocks)
+
         return blocks
+
+    def fetch_states(self, blocks: List[PowerBlock]):
+        '''
+        fetch state for all blocks
+        '''
+        if len(blocks) == 0:
+            return
+
+        if len(blocks) == 1:
+            state = self.state_SQL.get_state(timestamp=blocks[0].timestamp)
+            blocks[0].state = state
+            return
+
+        start = blocks[0].timestamp
+        end = blocks[-1].timestamp
+        states = self.state_SQL.get_states(start=start, end=end)
+        if len(states) != len(blocks):
+            raise RuntimeError('incompatible length of states and blocks')
+        for i in range(len(blocks)):
+            blocks[i].state = states[i]
 
 # ----------------------------------------------------------------------------------
 # Streamer
@@ -184,7 +214,8 @@ class Streamer:
         self,
         sid: str,
         sio: socketio.Server,
-        redis_cache: RedisCache
+        redis_cache: RedisCache,
+        state_SQL: StateSQL
     ) -> None:
 
         # SocketIO
@@ -202,7 +233,8 @@ class Streamer:
         self.fetcher = PowerBlockFetcher(
             redis_cache=redis_cache,
             es=self.es,
-            pb_index=config.ES_POWER_BLOCKS_INDEX
+            pb_index=config.ES_POWER_BLOCKS_INDEX,
+            state_SQL=state_SQL
         )
 
     def _sleep(self, duration):

@@ -80,7 +80,8 @@ class MonitorServer:
             self._clients[sid] = Streamer(
                 sid=sid,
                 sio=self.sio,
-                redis_cache=self.redis_cache)
+                redis_cache=self.redis_cache,
+                state_SQL=self.state_SQL)
 
     def on_disconnect(self, sid: str):
         print(f'>>> client disconnected {sid}')
