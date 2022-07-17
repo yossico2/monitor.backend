@@ -200,7 +200,7 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         end = blocks[-1].timestamp
         states = self.state_SQL.get_states(start=start, end=end)
         if len(states) != len(blocks):
-            raise RuntimeError('incompatible length of states and blocks')
+            raise RuntimeError(f'incompatible length of states ({len(states)}) and blocks ({len(blocks)})')
         for i in range(len(blocks)):
             blocks[i].state = states[i]
 

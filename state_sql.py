@@ -61,14 +61,15 @@ class StateSQL:
         '''
         sql = f'SELECT state FROM {TABLE_NAME} WHERE timestamp = {timestamp}'
         self.cursor.execute(sql)
-        return self.cursor.fetchall()[0][0]
+        res = self.cursor.fetchall()
+        return res[0][0]
 
     def get_states(self, start: int, end: int) -> List[int]:
         '''
         get the states for a time range
         return a list of states
         '''
-        sql = f'SELECT state FROM {TABLE_NAME} WHERE timestamp >= {start} and timestamp < {end}'
+        sql = f'SELECT state FROM {TABLE_NAME} WHERE timestamp >= {start} and timestamp <= {end}'
         self.cursor.execute(sql)
         res = self.cursor.fetchall()
         return [state[0] for state in res]

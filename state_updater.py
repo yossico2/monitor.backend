@@ -52,6 +52,13 @@ class StateUpdater:
         power_blocks = [PowerBlock(**d) for d in events_dict]
         for pb in power_blocks:
             self.ring.push(pb)
+
+        # set event initial state -> sql_db
+        if len(power_blocks) > 0:
+            state_pairs = [(item.timestamp, stateInit)
+                           for item in power_blocks]
+            self.state_SQL.update_states(state_pairs)
+
         if config.DEBUG_STATE_UPDATE:
             print(
                 f'on_datagen_events: ({len(power_blocks)} events), ring size: {self.ring.count()}')
@@ -79,7 +86,7 @@ class StateUpdater:
                     # update cache
                     self.redis_cache.update_items(updated_events)
 
-                    # updated_events -> db
+                    # updated_events -> sql_db
                     state_pairs = [(item.timestamp, item.state)
                                    for item in updated_events]
                     self.state_SQL.update_states(state_pairs)
