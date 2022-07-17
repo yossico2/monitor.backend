@@ -47,7 +47,10 @@ class StateSQL:
         table schema: [timestamp, state]
         items is a list of tuples (timestamp, state)
         '''
-        sql = f'INSERT INTO {DB_NAME} (timestamp, state) VALUES (%s, %s)'
+        # using UPSERT
+        sql = f'INSERT INTO {DB_NAME} (timestamp, state) VALUES (%s, %s)' \
+              f' ON DUPLICATE KEY UPDATE `state` = VALUES(`state`)'
+
         self.cursor.executemany(sql, items)
         self.db.commit()
 
