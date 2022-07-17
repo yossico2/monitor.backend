@@ -5,6 +5,7 @@ from typing import List, Tuple
 DB_NAME = 'states'
 TABLE_NAME = 'states'
 
+
 class StateSQL:
     def __init__(self, sql_host, sql_user, sql_password):
         self.db = mysql.connector.connect(
@@ -30,7 +31,7 @@ class StateSQL:
         # create (states) table if not exists
         sql = 'USE states;'
         self.cursor.execute(sql)
-        sql = f'CREATE TABLE IF NOT EXISTS {TABLE_NAME} (timestamp INT PRIMARY KEY, state INT DEFAULT 0);'
+        sql = f'CREATE TABLE IF NOT EXISTS {TABLE_NAME} (timestamp BIGINT PRIMARY KEY, state INT DEFAULT 0);'
         self.cursor.execute(sql)
 
     def update_state(self, timestamp: int, state: int):
@@ -50,21 +51,24 @@ class StateSQL:
         self.cursor.executemany(sql, items)
         self.db.commit()
 
-    def get_state(self, timestamp: int):
+    def get_state(self, timestamp: int) -> int:
         '''
         get the state of a single timestamp
         return state
         '''
-        # lilo:TODO
-        pass
+        sql = f'SELECT state FROM {TABLE_NAME} WHERE timestamp = {timestamp}'
+        self.cursor.execute(sql)
+        return self.cursor.fetchall()[0][0]
 
-    def get_states(self, start: int, end: int):
+    def get_states(self, start: int, end: int) -> List[int]:
         '''
         get the states for a time range
-        return a list of pairs (timestamp, state)
+        return a list of states
         '''
-        # lilo:TODO
-        pass
+        sql = f'SELECT state FROM {TABLE_NAME} WHERE timestamp >= {start} and timestamp < {end}'
+        self.cursor.execute(sql)
+        res = self.cursor.fetchall()
+        return [state[0] for state in res]
 
 
 if __name__ == "__main__":
@@ -75,5 +79,7 @@ if __name__ == "__main__":
     state_sql.init_db()
     # state_sql.update_state(1,2)
     # state_sql.update_states([(4,4), (5,5), (6,6)])
+    # print(state_sql.get_state(timestamp=5))
+    # print(state_sql.get_states(start=1, end=4))
     time.sleep(1)
     state_sql.close()
