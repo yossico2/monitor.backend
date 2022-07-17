@@ -45,6 +45,9 @@ class StateUpdater:
             self.thread.join()
 
     def on_datagen_events(self, sid: str, events_json):
+        '''
+        push events to Ring
+        '''
         events_dict = json.loads(events_json)
         power_blocks = [PowerBlock(**d) for d in events_dict]
         for pb in power_blocks:
@@ -54,6 +57,9 @@ class StateUpdater:
                 f'on_datagen_events: ({len(power_blocks)} events), ring size: {self.ring.count()}')
 
     def update_state_background_task(self):
+        '''
+        update events state in Ring
+        '''
 
         while True:
             if self.stop_flag:

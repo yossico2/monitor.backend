@@ -55,6 +55,7 @@ class MonitorServer:
 
         self.sio.on('connect', self.on_connect)
         self.sio.on('disconnect', self.on_disconnect)
+        # datagen-events: should actually come from kafka topic
         self.sio.on('datagen-events', self.state_updater.on_datagen_events)
         self.sio.on('pb-fetch-range', self.on_fetch_range)
         self.sio.on('pb-stream', self.on_stream)
