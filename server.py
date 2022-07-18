@@ -91,11 +91,14 @@ class MonitorServer:
                 client_streamer.stop()
             self._clients[sid] = None
 
-    def on_fetch_range(self, sid: str, start_date: datetime, end_date: datetime):
+    def on_fetch_range(self, sid: str, start_date: str, end_date: str):
         '''
         fetch events between (start_date, end_date)
         '''
-        print(f'>>> on_fetch_range (sid:{sid})')
+        # lilo:TODO
+        print(f'>>> fetch_range (sid:{sid}) start_date: {start_date} end_date: {end_date}')
+        start_date = parser.parse(start_date)
+        end_date = parser.parse(end_date)
         client_streamer = self._clients.get(sid)
         client_streamer.fetch(start_date, end_date)
 

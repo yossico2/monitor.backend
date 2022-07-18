@@ -316,7 +316,7 @@ class Streamer:
                     self._sleep(STREAM_INTERVAL)
                     continue  # pause
 
-                pb_json = json.dumps(pb, default=pydantic_encoder)
+                pb_json = json.dumps([pb], default=pydantic_encoder)
                 self.sio.emit('power-blocks', data=pb_json, to=self.sid)
 
                 #  print timestamp of power_block
