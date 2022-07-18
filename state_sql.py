@@ -1,5 +1,6 @@
 import mysql.connector
 from typing import List, Tuple
+from model import States
 
 
 DB_NAME = 'states'
@@ -62,17 +63,17 @@ class StateSQL:
         sql = f'SELECT state FROM {TABLE_NAME} WHERE timestamp = {timestamp}'
         self.cursor.execute(sql)
         res = self.cursor.fetchall()
-        return res[0][0]
+        return States.init.value if len(res) == 0 else res[0][0]
 
-    def get_states(self, start: int, end: int) -> List[int]:
+    def get_states(self, start: int, end: int) -> List[Tuple[int, int]]:
         '''
-        get the states for a time range
-        return a list of states
+        get the states for the specified time range
+        return a list of tuples [(timestamp, state), ...]
         '''
-        sql = f'SELECT state FROM {TABLE_NAME} WHERE timestamp >= {start} and timestamp <= {end}'
+        sql = f'SELECT timestamp, state FROM {TABLE_NAME} WHERE timestamp >= {start} and timestamp <= {end}'
         self.cursor.execute(sql)
         res = self.cursor.fetchall()
-        return [state[0] for state in res]
+        return [state for state in res]
 
 
 if __name__ == "__main__":
@@ -82,8 +83,8 @@ if __name__ == "__main__":
                          sql_password='mysql')
     state_sql.init_db()
     # state_sql.update_state(1,2)
-    # state_sql.update_states([(4,4), (5,5), (6,6)])
-    # print(state_sql.get_state(timestamp=5))
-    # print(state_sql.get_states(start=1, end=4))
+    # state_sql.update_states([(40,4), (50,5), (60,6)])
+    # print(state_sql.get_state(timestamp=40))
+    print(state_sql.get_states(start=10, end=60))
     time.sleep(1)
     state_sql.close()

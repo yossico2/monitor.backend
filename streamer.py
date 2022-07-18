@@ -1,7 +1,5 @@
 import abc
 import json
-import re
-import time
 import socketio
 import threading
 import eventlet
@@ -14,7 +12,7 @@ from pydantic.json import pydantic_encoder
 import config
 from state_sql import StateSQL
 import utils
-from model import T, PowerBlock
+from model import T, PowerBlock, States
 from redis_cache import RedisCache, Bucket, BUCKET_TIMEDELTA
 
 STREAM_INTERVAL = config.PERIOD_MS/1000
@@ -141,22 +139,15 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
     def get_values_from_upstream(self, bucket: Bucket) -> List[PowerBlock]:
         '''
         Pull from ElasticSearch data items in bucket range, convert them to model 
-        instances, and return them as a sorted list by PowerBlock.timestamp.
+        instances, and return them as a sorted list by timestamp.
         '''
-
-        start_date_ms = bucket.start
-        end_date_ms = bucket.end
-
-        # timing
-        if config.DEBUG_STREAMER:
-            fetch_timing_start = time.time()
 
         # ElasticSearch query
         s = Search(using=self.es, index=self.pb_index).filter(
             'range',
             timestamp={
-                'gte': start_date_ms,
-                'lt': end_date_ms,
+                'gte': bucket.start,
+                'lt': bucket.end,
             },
         )
 
@@ -165,19 +156,16 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
         # limited sizes, memory is not a problem.
         records = list(s.params(preserve_order=True).scan())
 
+        # convert to model objects
         blocks = [
             PowerBlock(
                 timestamp=record.timestamp,
                 frequency=record.frequency,
                 power=record.power,
+                state=States.init.value
             )
             for record in records
         ]
-
-        # timing
-        if config.DEBUG_STREAMER:
-            duration_ms = round(1000*(time.time() - fetch_timing_start))
-            print(f'{len(blocks)} items fetched from upstream ({duration_ms} ms)')
 
         # fetch state for all blocks
         self.fetch_states(blocks)
@@ -196,13 +184,14 @@ class PowerBlockFetcher(GenericFetcher[PowerBlock]):
             blocks[0].state = state
             return
 
+        # multiple state are returned as list of tuples [(timestamp, state),...]
         start = blocks[0].timestamp
         end = blocks[-1].timestamp
         states = self.state_SQL.get_states(start=start, end=end)
-        if len(states) != len(blocks):
-            raise RuntimeError(f'incompatible length of states ({len(states)}) and blocks ({len(blocks)})')
-        for i in range(len(blocks)):
-            blocks[i].state = states[i]
+        lookup = dict(states)
+        for block in blocks:
+            state = lookup.get(block.timestamp)
+            block.state = state if state else States.init.value
 
 # ----------------------------------------------------------------------------------
 # Streamer

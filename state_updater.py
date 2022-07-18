@@ -7,7 +7,7 @@ from pydantic.json import pydantic_encoder
 from typing import List
 
 import config
-from model import PowerBlock
+from model import PowerBlock, States
 import utils
 from ring import Ring
 from redis_cache import RedisCache
@@ -18,12 +18,6 @@ from state_sql import StateSQL
 SEC = 1000  # ms
 MINUTE = 60 * SEC
 PERIOD = 100  # ms
-
-stateInit = 0
-stateRequest = 1
-stateResponse = 2
-stateResolved = 3
-
 
 class StateUpdater:
     def __init__(self, sio: socketio.Server, redis_cache: RedisCache, state_SQL: StateSQL):
@@ -53,12 +47,6 @@ class StateUpdater:
         for pb in power_blocks:
             self.ring.push(pb)
 
-        # set event initial state -> sql_db
-        if len(power_blocks) > 0:
-            state_pairs = [(item.timestamp, stateInit)
-                           for item in power_blocks]
-            self.state_SQL.update_states(state_pairs)
-
         if config.DEBUG_STATE_UPDATE:
             print(
                 f'on_datagen_events: ({len(power_blocks)} events), ring size: {self.ring.count()}')
@@ -85,7 +73,7 @@ class StateUpdater:
                 if len(updated_events) > 0:
                     # update cache
                     self.redis_cache.update_items(updated_events)
-
+                    
                     # updated_events -> sql_db
                     state_pairs = [(item.timestamp, item.state)
                                    for item in updated_events]
@@ -109,39 +97,39 @@ class StateUpdater:
         state = e.state
 
         # init -> request
-        if state == stateInit:
+        if state == States.init.value:
             if now - e.timestamp < 3000:
                 return False  # unmodified
             if now - e.timestamp > 6000:
                 return False  # unmodified
             if random.random() < 0.2:
                 return False  # unmodified
-            e.state = stateRequest
+            e.state = States.request.value
             return True
 
         # request -> response
-        if state == stateRequest:
+        if state == States.request.value:
             if now - e.timestamp < 15000:
                 return False  # unmodified
             if now - e.timestamp > 17000:
                 return False  # unmodified
             if random.random() < 0.2:
                 return False  # unmodified (failed to get response)
-            e.state = stateResponse
+            e.state = States.response.value
             return True
 
         # response -> resolved
-        if state == stateResponse:
+        if state == States.response.value:
             if now - e.timestamp < 25000:
                 return False  # unmodified
             if now - e.timestamp > 27000:
                 return False  # unmodified
             if random.random() < 0.99:
                 return False  # unmodified (not resolved)
-            e.state = stateResolved
+            e.state = States.resolved.value
             return True
 
-        if state == stateResolved:
+        if state == States.resolved.value:
             return False  # unmodified
 
         return False  # unmodified

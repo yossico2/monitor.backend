@@ -1,5 +1,6 @@
 from typing import TypeVar
 from pydantic import BaseModel
+from enum import Enum
 
 
 class TimestampModel(BaseModel):
@@ -20,3 +21,9 @@ class PowerBlock(TimestampModel):
 
  # lilo: T = TypeVar("T", bound=TimestampModel)
 T = TypeVar("T", bound=PowerBlock)
+
+class States(Enum):
+    init = 0
+    request = 1
+    response = 2
+    resolved = 3
