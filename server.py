@@ -143,7 +143,7 @@ class MonitorServer:
             f'>>> on_fetch_power_block_data (sid: {sid}, timestamp: {timestamp})')
         data = []
         frequency = 2 * 1e9
-        numPoints = random.randint(0, 100)
+        numPoints = random.randint(0, 1000)
         maxStepSize = 500000 / numPoints
         for i in range(numPoints):
             frequency += (random.random() + 0.01) * maxStepSize

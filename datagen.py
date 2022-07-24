@@ -78,7 +78,7 @@ class DataGenerator:
                                  wait=False, wait_timeout=0.1)
                 break
             except:
-                eventlet.sleep(0.1)  # sec
+                eventlet.sleep(1)  # sec
 
         # collect objects for bulk index
         docs: list(PowerBlock_Document) = []
