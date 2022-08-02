@@ -19,7 +19,11 @@ def _now_ms():
 
 
 class PowerBlock_Document(Document):
+    '''
+    Elasticsearch document model for PowerBlock
+    '''
 
+    # lilo: sensor_id = Integer(required=True)
     timestamp = Date(required=True, format="epoch_millis")
     frequency = Float(required=True)
     power = Integer(required=True)
@@ -60,16 +64,7 @@ class DataGenerator:
             if config.DEBUG_DATAGEN:
                 print(f'data generation stopped.')
 
-    def gendata_background_task(self):
-        '''
-        generate PowerBlock_Document objects
-        bulk save to es every 1 sec.
-        '''
-
-        # signal gendata thread started
-        self.event_gendata_thread_start.set()
-
-        # connect sio.client
+    def sio_connect_to_server(self):
         server_sio_address = f'http://localhost:{config.SERVER_PORT}'
         while True:
             try:
@@ -80,13 +75,25 @@ class DataGenerator:
             except:
                 eventlet.sleep(1)  # sec
 
+    def gendata_background_task(self):
+        '''
+        generate PowerBlock_Document objects
+        bulk save to es every 1 sec.
+        '''
+
+        # signal gendata thread started
+        self.event_gendata_thread_start.set()
+
+        # connect sio.client
+        self.sio_connect_to_server()
+
         # collect objects for bulk index
         docs: list(PowerBlock_Document) = []
 
         # bulk every 1 sec
         last_bulk = _now_ms()
 
-        # generate data while not stop flag
+        # generate data (while not stop flag)
         while not self.stop_flag:
 
             now = _now_ms()
